@@ -145,7 +145,20 @@ Sudah selesai:
      Fault Hunter identik dengan engine Python, replay mismatch 0.
    - Pilot parfor 121 kasus (`batch_matlab_pilot/`): 121/121 identik dengan Python, 0 gagal,
      selisih waktu trip rata-rata 0,6 ms (maks 13,5 ms, 153 trip), 19,8 menit dengan 2 worker.
-6. Launcher satu klik (`Jalankan SimRelay.bat`) dan shortcut desktop (hanya di PC lama).
+6. Launcher satu klik (`Jalankan SimRelay.bat`) dan shortcut desktop (dibuat ulang di PC baru).
+7. Revisi kanvas SLD (`web/js/sld.js`, `engine/layout.py`):
+   - Simbol IEC 60617 (CB tetap kotak SCADA), relai = kotak "R" dengan kabel CT/VT dan trip ke CB.
+   - Layer komponen dan teks (tombol Layers), Key, dan ceklis besaran per komponen di info box.
+   - Info box menjelaskan arti setiap warna komponen.
+   - Warna netral default; amber = tegangan marginal; ungu = pickup relai; merah = tegangan
+     kritis atau trip.
+   - Saluran dianggap hidup bila bertegangan atau dialiri arus di atas 1 A.
+   - Jalur arus gangguan (merah, layer ground truth) ditentukan secara topologi: lintasan dari
+     sumber tersambung (grid via CB-GI, DER in service) ke titik gangguan lewat CB tertutup, dan
+     hanya saluran yang berarus. Beban besar seperti CLPU tidak pernah ikut tertandai.
+   - Layout ringkas (viewBox sekitar 1830 x 585). Bus yang kehabisan sisi menjadi busbar
+     vertikal: semua sambungan masuk dari samping, dan bus sesudahnya bergeser ke kanan.
+   - Alarm SCADA berbentuk tabel formal di panel kanan.
 
 ## 5. Ringkasan hasil kampanye Python (batch/)
 
