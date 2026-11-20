@@ -203,6 +203,153 @@ def preset_ready(pid):
     return os.path.exists(os.path.join(RUN_CACHE, scenario_key(preset_scenario(pid)), "result.json"))
 
 
+# ------------------------------------------------------------------ run catalogue
+LABELS_P = os.path.join(ROOT, "runs", "labels.json")          # first format (labels only), migrated once
+NOTES_P = os.path.join(ROOT, "runs", "annotations.json")     # {key: {"labels": [...], "notes": "..."}}
+INDEX_P = os.path.join(ROOT, "runs", "index.json")           # {key: run number}, assigned once in run order
+LABELS_LOCK = threading.Lock()
+LOAD_LABEL = {"min_siang": "Minimum (day)", "menengah": "Medium", "puncak_malam": "Peak (night)"}
+
+
+def _preset_keys():
+    out = {}
+    for p in PRESETS:
+        for eng in ("python", "matlab"):
+            out[scenario_key(preset_scenario(p["id"], eng))] = (p, eng)
+    return out
+
+
+def run_id(key, preset=None, engine="python"):
+    if preset:
+        return f"PRE-{preset['id']}" + ("-ML" if engine == "matlab" else "")
+    return "RUN-" + key[:6].upper()
+
+
+def run_meta(key, pkeys):
+    """Small summary of a cached run, kept next to result.json so the catalogue stays fast."""
+    folder = os.path.join(RUN_CACHE, key)
+    meta_p = os.path.join(folder, "meta.json")
+    if os.path.exists(meta_p):
+        with open(meta_p) as f:
+            return json.load(f)
+    with open(os.path.join(folder, "result.json")) as f:
+        j = json.load(f)
+    sc = j.get("scenario") or {}
+    eng = j.get("engine", "python")
+    pre = pkeys.get(key)
+    preset = pre[0] if pre else None
+    H = j.get("hunter") or {}
+    rel = sc.get("relays") or {}
+    meta = {
+        "key": key, "run_id": run_id(key, preset, eng), "source": "preset" if preset else "custom",
+        "preset": preset["id"] if preset else None, "code": preset["code"] if preset else None,
+        "name": sc.get("name") or (preset["name"] if preset else "Custom scenario"),
+        "desc": preset["desc"] if preset else "",
+        "engine": eng, "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(os.path.join(folder, "result.json")))),
+        "der": [{"type": u.get("type"), "bus": u.get("bus"), "kva": u.get("kva")} for u in (sc.get("der") or {}).get("units", [])],
+        "grid": (sc.get("grid") or {}).get("mode", "grid"),
+        "load": LOAD_LABEL.get((sc.get("load") or {}).get("level"), (sc.get("load") or {}).get("level")),
+        "faults": [{"type": f.get("type"), "phases": f.get("phases"), "at": f.get("bus") or f.get("line"), "rf": f.get("rf", 0)} for f in sc.get("faults", [])],
+        "relay": rel.get("default", "OCR"), "relay_overrides": rel.get("classes") or {},
+        "counts": {c: n for c, n in (H.get("counts") or {}).items() if n},
+        "dependability": H.get("dependability"), "security": H.get("security"),
+    }
+    with open(meta_p, "w") as f:
+        json.dump(meta, f)
+    return meta
+
+
+def _write_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f, indent=1)
+    os.replace(tmp, path)
+
+
+def load_annotations():
+    """Labels and notes per run key. A preset starts with its identifier as label and its name as note."""
+    with LABELS_LOCK:
+        if os.path.exists(NOTES_P):
+            with open(NOTES_P) as f:
+                return json.load(f)
+        ann = {}
+        pk = _preset_keys()
+        old = {}
+        if os.path.exists(LABELS_P):
+            with open(LABELS_P) as f:
+                old = json.load(f)
+        for key, (p, eng) in pk.items():
+            seeded = {"Baseline", f"{p['code']}: {p['name']}"}
+            extra = [x for x in old.get(key, []) if x not in seeded]
+            ann[key] = {"labels": [f"PRE-{p['id']}" + ("-ML" if eng == "matlab" else "")] + extra, "notes": p["name"] if p["code"] == "OK" else f"{p['code']}: {p['name']}"}
+        for key, labs in old.items():
+            if key not in ann:
+                ann[key] = {"labels": labs, "notes": ""}
+        _write_json(NOTES_P, ann)
+        return ann
+
+
+def save_annotation(key, labels=None, notes=None):
+    ann = load_annotations()
+    with LABELS_LOCK:
+        cur = ann.get(key) or {"labels": [], "notes": ""}
+        if labels is not None:
+            clean = []
+            for x in labels:
+                x = str(x).strip()[:60]
+                if x and x not in clean:
+                    clean.append(x)
+            cur["labels"] = clean
+        if notes is not None:
+            cur["notes"] = str(notes).strip()[:300]
+        ann[key] = cur
+        _write_json(NOTES_P, ann)
+        return cur
+
+
+def run_numbers(metas):
+    """Native run number: the order in which runs were produced, fixed once assigned."""
+    with LABELS_LOCK:
+        idx = {}
+        if os.path.exists(INDEX_P):
+            with open(INDEX_P) as f:
+                idx = json.load(f)
+        new = [m for m in metas if m["key"] not in idx]
+        if new:
+            order = {p["id"]: i for i, p in enumerate(PRESETS)}
+            new.sort(key=lambda m: (m["created"], m["source"] != "preset", order.get(m["preset"], 99), m["engine"] != "python"))
+            n = max(idx.values(), default=0)
+            for m in new:
+                n += 1
+                idx[m["key"]] = n
+            _write_json(INDEX_P, idx)
+        return idx
+
+
+def catalogue():
+    pkeys = _preset_keys()
+    ann = load_annotations()
+    runs = []
+    if os.path.isdir(RUN_CACHE):
+        for key in os.listdir(RUN_CACHE):
+            if not os.path.exists(os.path.join(RUN_CACHE, key, "result.json")):
+                continue
+            try:
+                runs.append(dict(run_meta(key, pkeys)))
+            except Exception:
+                traceback.print_exc()
+    idx = run_numbers(runs)
+    for m in runs:
+        a = ann.get(m["key"]) or {}
+        m["run_no"] = idx[m["key"]]
+        m["run_id"] = f"{idx[m['key']]:04d}"
+        m["labels"] = a.get("labels", [])
+        m["notes"] = a.get("notes", "")
+    runs.sort(key=lambda m: m["run_no"], reverse=True)
+    return {"runs": runs}
+
+
 def precompute_all():
     for p in PRESETS:
         if preset_ready(p["id"]):
@@ -264,6 +411,17 @@ class Handler(SimpleHTTPRequestHandler):
                 if src is None:
                     return self._json({"error": "Run data not found in cache. Please run the scenario again."}, 404)
                 return self._json(waveform(src, sig, mode))
+            if u.path == "/api/catalog":
+                return self._json(catalogue())
+            if u.path == "/api/result":
+                key = q["key"][0]
+                if not all(c in "0123456789abcdef" for c in key):
+                    return self._json({"error": "invalid key"}, 400)
+                res_p = os.path.join(RUN_CACHE, key, "result.json")
+                if not os.path.exists(res_p):
+                    return self._json({"error": "This run is no longer in the cache."}, 404)
+                with open(res_p, "rb") as f:
+                    return self._bytes(f.read())
             if u.path == "/api/runs":
                 d = os.path.join(ROOT, "runs")
                 items = sorted(os.listdir(d)) if os.path.isdir(d) else []
@@ -302,6 +460,11 @@ class Handler(SimpleHTTPRequestHandler):
             if u.path == "/api/run":
                 save = (body.get("sim") or {}).get("save", True)
                 return self._bytes(get_result(body, save_log=save))
+            if u.path == "/api/labels":
+                key = str(body["key"])
+                if not all(c in "0123456789abcdef" for c in key):
+                    return self._json({"error": "invalid key"}, 400)
+                return self._json(save_annotation(key, body.get("labels"), body.get("notes")))
         except Exception as e:
             traceback.print_exc()
             return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
