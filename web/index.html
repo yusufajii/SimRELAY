@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SimRelay 34 Test Bench</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%222%22 fill=%22%231e293b%22/%3E%3Cpath d=%22M9 2 5 9h3l-1 5 4-7H8z%22 fill=%22%23fff%22/%3E%3C/svg%3E">
+<link rel="icon" href="img/logo-stei.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -22,6 +23,8 @@
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
   <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-run" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4 3 9l9 5 9-5zM3 14l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M8 9.5h8M8 14.5h5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
 </svg>
@@ -30,24 +33,24 @@
   <!-- Header -->
   <header id="hdr">
     <div class="brand">
-      <div class="logo"><svg viewBox="0 0 16 16"><path d="M9 2 5 9h3l-1 5 4-7H8z" fill="#fff"/></svg></div>
-      <div>
-        <div class="b1">SimRelay 34</div>
-        <div class="b2">IEEE 34-Bus Protection Test Bench</div>
-      </div>
+      <img class="logo-img" src="img/logo-stei.png" alt="STEI ITB">
+      <div class="b1">SimRelay<span>34</span></div>
     </div>
-    <div class="scen-wrap">
-      <div class="scen-label">Scenarios</div>
-      <div id="scen-chips" class="scen-chips"></div>
+    <div class="mode-cap" title="The workspace is in View mode: stored runs can be browsed and played back.">
+      <span class="mc-l">Mode</span><span class="mc-v">View</span>
     </div>
+    <button class="run-sel" id="run-sel" title="Choose a stored run">
+      <span class="rs-cap">Run</span>
+      <span class="rs-main"><span class="rs-id" id="rs-id"></span><span class="rs-lab" id="rs-lab"></span><span class="rs-name" id="rs-name"></span></span>
+      <svg class="ic rs-caret"><use href="#i-caret"/></svg>
+    </button>
     <div class="hdr-actions">
-      <div id="verdict-mini" class="verdict-mini"></div>
       <label class="sel eng-sel" title="Simulation engine. MATLAB Simulink runs a Simscape Electrical phasor model built from this app's network, relay logic and events.">Engine
         <select id="engine"><option value="python">Python (fast)</option><option value="matlab">MATLAB Simulink</option></select>
       </label>
-      <a class="btn" href="postrun.html" style="text-decoration:none" title="Batch results and Proof of Urgency figures">Post-Run Analysis</a>
-      <button id="btn-editor" class="btn" title="Configure the simulator degrees of freedom (DoF 1 to 4)"><svg class="ic"><use href="#i-sliders"/></svg>Scenario Editor</button>
-      <button id="btn-run" class="btn primary"><svg class="ic"><use href="#i-run"/></svg>Run Simulation</button>
+      <span class="vsep"></span>
+      <button class="btn" id="btn-sim" disabled title="Start Simulation runs a single scenario. Not available in View mode."><svg class="ic"><use href="#i-run"/></svg>Start Simulation</button>
+      <button class="btn primary" id="btn-camp" disabled title="Start Campaign runs multiple scenarios. Not available in View mode."><svg class="ic"><use href="#i-run"/></svg>Start Campaign</button>
     </div>
   </header>
 
@@ -57,10 +60,7 @@
     <!-- Operator SCADA -->
     <section id="p-scada" class="panel">
       <div class="ph">
-        <span class="tag op">Operator View</span>
-        <span class="ttl">Single-Line Diagram</span>
-        <span class="engine-badge" id="engine-badge"></span>
-        <span class="sub" id="scada-clock"></span>
+        <span class="ttl caps">Single Line Diagram</span>
         <div class="tools">
           <div class="pop-wrap">
             <button class="btn tiny" id="btn-layers" title="Choose the component and text layers shown on the diagram"><svg class="ic"><use href="#i-layers"/></svg>Layers</button>
@@ -195,6 +195,30 @@
       <button class="btn primary" id="dr-run"><svg class="ic"><use href="#i-run"/></svg>Run Scenario</button>
     </div>
   </aside>
+
+  <!-- Stored runs -->
+  <div id="catalog" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cat-title">
+    <div class="m-box">
+      <div class="m-head">
+        <div>
+          <div class="m-title" id="cat-title">Stored Runs</div>
+          <div class="m-sub">Runs are numbered in the order they were produced. Labels and notes are saved on this computer; labels can also be used as a filter.</div>
+        </div>
+        <button class="m-x" id="cat-x" title="Close (Esc)"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="m-tools">
+        <label class="f-search"><svg class="ic"><use href="#i-search"/></svg><input id="cat-q" type="search" placeholder="Search run ID, label, notes, bus or relay" autocomplete="off"></label>
+        <div class="f-row" id="cat-filters"></div>
+      </div>
+      <div class="m-body">
+        <table class="cat" id="cat-table">
+          <thead><tr><th>Run ID</th><th>Labels</th><th>Notes</th><th>DER and load</th><th>Fault</th><th>Relays</th><th>Outcome</th><th>Engine</th><th>Stored</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="m-foot"><span id="cat-count"></span></div>
+    </div>
+  </div>
 
   <div id="busy" class="busy hidden"><div class="busy-card"><div class="spin"></div><div id="busy-t">Running the phasor engine</div></div></div>
   <div id="toast" class="toast hidden"></div>

@@ -40,7 +40,7 @@ class App {
     sel.value = this.engine;
     sel.onchange = () => this.setEngine(sel.value);
     this.baseLoadKW = this.init.topology.loads.filter(l => l.feeder === "A").reduce((s, l) => s + l.P.reduce((a, c) => a + c, 0), 0);
-    this.renderChips();
+    await this.loadCatalog();
     this.busy(false);
     await this.loadPreset(this.init.presets[0].id, true);
     this.prefetch();
@@ -49,7 +49,6 @@ class App {
   setEngine(eng) {
     this.engine = eng;
     try { localStorage.setItem("sr34-engine", eng); } catch (e) { /* storage unavailable */ }
-    this.renderChips();
     this.runScenario();
   }
   cacheKey() {
@@ -62,34 +61,165 @@ class App {
       if (this.runCache.has("python|preset:" + p.id)) continue;
       try {
         const st = await (await fetch("/api/status")).json();
-        this.ready = st.ready; this.renderChips();
+        this.ready = st.ready;
         const j = await (await fetch(`/api/preset?id=${p.id}`)).json();
-        if (!j.error) { this.runCache.set("python|preset:" + p.id, j); this.ready[p.id] = true; this.renderChips(); }
+        if (!j.error) { this.runCache.set("python|preset:" + p.id, j); this.ready[p.id] = true; }
       } catch (e) { /* retried on demand */ }
     }
   }
 
-  // skenario
-  renderChips() {
-    const host = $("#scen-chips"); host.innerHTML = "";
-    for (const p of this.init.presets) {
-      const c = document.createElement("div");
-      c.className = "chip" + (p.id === this.presetId ? " on" : "");
-      const ready = this.engine === "python" ? (this.ready[p.id] || this.runCache.has("python|preset:" + p.id))
-                                             : this.runCache.has("matlab|preset:" + p.id) || true;
-      c.title = p.desc + (ready ? "" : " (precomputing in the background)");
-      c.innerHTML = `<span class="code ${p.code}">${p.code}</span>${p.name}${ready ? "" : '<span class="pend"></span>'}`;
-      c.onclick = () => this.loadPreset(p.id, true);
-      host.appendChild(c);
-    }
+  // ---- stored runs (View mode)
+  async loadCatalog() {
+    try { this.catalog = (await (await fetch("/api/catalog")).json()).runs || []; }
+    catch (e) { this.catalog = this.catalog || []; }
+    return this.catalog;
   }
+  currentMeta() {
+    if (!this.run) return null;
+    return (this.catalog || []).find(m => m.key === this.run.id) || null;
+  }
+  renderRunSel() {
+    const m = this.currentMeta();
+    $("#rs-id").textContent = m ? m.run_id : "";
+    $("#rs-lab").textContent = m && m.labels.length ? m.labels.join(", ") : "";
+    $("#rs-name").textContent = m ? m.notes || "" : "";
+    $("#run-sel").title = m ? `Run ${m.run_id}${m.labels.length ? ", " + m.labels.join(", ") : ""}${m.notes ? "\n" + m.notes : ""}` : "Choose a stored run";
+  }
+  async openCatalog() {
+    $("#catalog").classList.remove("hidden");
+    this._catOpen = true;
+    if (!this._catFilters) this._catFilters = { q: "", source: "", engine: "", outcome: "", der: "", ftype: "", relay: "", label: "" };
+    this.renderCatalog();
+    await this.loadCatalog();
+    this.renderCatalog();
+    setTimeout(() => $("#cat-q").focus(), 0);
+  }
+  closeCatalog() { $("#catalog").classList.add("hidden"); this._catOpen = false; }
+  derText(m) {
+    if (!m.der.length) return "None";
+    return m.der.map(d => `${d.type} ${Math.round(d.kva)} kVA at ${d.bus}`).join("; ") + (m.grid === "island" ? " (islanded)" : "");
+  }
+  faultText(m) {
+    if (!m.faults.length) return "None";
+    return m.faults.map(f => `${f.type}${f.type === "3PH" ? "" : "-" + String(f.phases || "").toUpperCase()} at ${f.at}, Rf ${f.rf} Ω`).join("; ");
+  }
+  outcomeOf(m) { const c = Object.keys(m.counts || {}); return c.length ? c : ["OK"]; }
+  renderCatalog() {
+    const F = this._catFilters, runs = this.catalog || [];
+    const uniq = a => [...new Set(a)].filter(x => x !== undefined && x !== null && x !== "").sort();
+    const opts = {
+      source: [["", "All sources"], ["preset", "Preset"], ["custom", "Custom"]],
+      engine: [["", "All engines"], ["python", "Python"], ["matlab", "MATLAB Simulink"]],
+      outcome: [["", "All outcomes"], ["OK", "Correct operation"], ...["F-1", "F-2", "F-3", "F-4", "F-5", "NT"].map(c => [c, `${c} ${CODE_DESC[c]}`])],
+      der: [["", "All DER types"], ["none", "No DER"], ...uniq(runs.flatMap(m => m.der.map(d => d.type))).map(t => [t, t])],
+      ftype: [["", "All fault types"], ["none", "No fault"], ...uniq(runs.flatMap(m => m.faults.map(f => f.type))).map(t => [t, t])],
+      relay: [["", "All relay classes"], ...uniq(runs.map(m => m.relay)).map(c => [c, c])],
+      label: [["", "All labels"], ...uniq(runs.flatMap(m => m.labels || [])).map(l => [l, l])],
+    };
+    const host = $("#cat-filters");
+    if (host.dataset.sig !== JSON.stringify(opts)) {
+      host.innerHTML = Object.entries(opts).map(([k, o]) => `<select data-f="${k}" title="Filter">${o.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select>`).join("")
+        + `<button class="lnk" id="cat-reset">Clear filters</button>`;
+      host.dataset.sig = JSON.stringify(opts);
+      host.querySelectorAll("select").forEach(s => { s.value = F[s.dataset.f] || ""; s.onchange = () => { F[s.dataset.f] = s.value; this.renderCatalog(); }; });
+      $("#cat-reset").onclick = () => { for (const k of Object.keys(F)) F[k] = ""; $("#cat-q").value = ""; host.dataset.sig = ""; this.renderCatalog(); };
+    }
+    host.querySelectorAll("select").forEach(s => s.classList.toggle("set", !!F[s.dataset.f]));
+    const q = F.q.trim().toLowerCase();
+    const list = runs.filter(m => {
+      if (F.source && m.source !== F.source) return false;
+      if (F.engine && m.engine !== F.engine) return false;
+      if (F.outcome && !this.outcomeOf(m).includes(F.outcome)) return false;
+      if (F.der && (F.der === "none" ? m.der.length : !m.der.some(d => d.type === F.der))) return false;
+      if (F.ftype && (F.ftype === "none" ? m.faults.length : !m.faults.some(f => f.type === F.ftype))) return false;
+      if (F.relay && m.relay !== F.relay) return false;
+      if (F.label && !(m.labels || []).includes(F.label)) return false;
+      if (q) {
+        const hay = [m.run_id, String(m.run_no), m.notes, ...(m.labels || []), this.derText(m), m.load, this.faultText(m), m.relay, ...this.outcomeOf(m)].join(" ").toLowerCase();
+        if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
+      }
+      return true;
+    });
+    const cur = this.run ? this.run.id : null;
+    const out = m => this.outcomeOf(m).map(c => c === "OK" ? `<span class="st ok">Correct operation</span>` : `<span class="st bad">${c}${m.counts[c] > 1 ? " (" + m.counts[c] + ")" : ""}</span>`).join(" ");
+    const edit = (key, f, html, empty) => `<td class="ed" data-key="${key}" data-f="${f}"><span class="ed-v">${html || `<span class="none">${empty}</span>`}</span><button class="lnk ed-e" title="Edit">Edit</button></td>`;
+    $("#cat-table tbody").innerHTML = list.map(m => `<tr data-key="${m.key}" class="${m.key === cur ? "cur" : ""}">
+        <td class="rid">${esc(m.run_id)}</td>
+        ${edit(m.key, "labels", (m.labels || []).map(esc).join(", "), "No label")}
+        ${edit(m.key, "notes", esc(m.notes || ""), "No notes")}
+        <td>${esc(this.derText(m))}<div class="meta">${esc(m.load || "")} load</div></td>
+        <td>${esc(this.faultText(m))}</td>
+        <td>${esc(m.relay)}${Object.keys(m.relay_overrides || {}).length ? " (mixed)" : ""}</td>
+        <td>${out(m)}</td>
+        <td>${m.engine === "matlab" ? "MATLAB" : "Python"}</td>
+        <td class="dt">${esc(m.created)}</td></tr>`).join("")
+      || `<tr><td colspan="9" class="empty">${runs.length ? "No stored run matches the search and filters." : "Loading stored runs"}</td></tr>`;
+    $("#cat-count").textContent = runs.length ? `${list.length} of ${runs.length} runs` : "";
+    $("#cat-table tbody").querySelectorAll("tr[data-key]").forEach(tr => tr.onclick = ev => {
+      if (ev.target.closest(".ed")) return;
+      this.openRun(tr.dataset.key);
+    });
+    $("#cat-table tbody").querySelectorAll(".ed-e").forEach(b => b.onclick = ev => { ev.stopPropagation(); this.editField(b.closest(".ed")); });
+  }
+  // Inline editing of labels (comma separated) or notes (free text); Enter saves, Esc cancels.
+  editField(td) {
+    const key = td.dataset.key, f = td.dataset.f, m = this.catalog.find(x => x.key === key);
+    const val = f === "labels" ? (m.labels || []).join(", ") : m.notes || "";
+    td.innerHTML = `<input class="ed-in" value="${esc(val).replace(/"/g, "&quot;")}" placeholder="${f === "labels" ? "Label, another label" : "Notes for this run"}"><div class="hint">Enter to save, Esc to cancel.${f === "labels" ? " Separate labels with commas." : ""}</div>`;
+    const inp = td.querySelector("input"); inp.focus(); inp.select();
+    inp.onkeydown = async ev => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") { this.renderCatalog(); return; }
+      if (ev.key !== "Enter") return;
+      const body = { key };
+      if (f === "labels") body.labels = inp.value.split(",").map(x => x.trim()).filter(Boolean);
+      else body.notes = inp.value.trim();
+      try {
+        const j = await (await fetch("/api/labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+        if (j.error) throw new Error(j.error);
+        m.labels = j.labels; m.notes = j.notes;
+      } catch (e) { this.toast("The change could not be saved."); }
+      this.renderCatalog(); this.renderRunSel();
+    };
+    inp.onblur = () => setTimeout(() => { if (td.isConnected && td.querySelector(".ed-in")) this.renderCatalog(); }, 150);
+  }
+  async openRun(key) {
+    const m = this.catalog.find(x => x.key === key);
+    if (!m) return;
+    this.closeCatalog();
+    if (m.source === "preset") {
+      if (m.engine !== this.engine && (m.engine === "python" || this.init.matlab_available)) {
+        this.engine = m.engine; $("#engine").value = m.engine;
+      }
+      await this.loadPreset(m.preset, true);
+      return;
+    }
+    this.pause();
+    const ck = "key:" + key;
+    let j = this.runCache.get(ck);
+    if (!j) {
+      this.busy(true, "Loading the stored run");
+      try {
+        j = await (await fetch(`/api/result?key=${key}`)).json();
+        if (j.error) throw new Error(j.error);
+        this.runCache.set(ck, j);
+      } catch (e) { this.busy(false); this.toast("The run could not be loaded: " + e.message); return; }
+      this.busy(false);
+    }
+    this.presetId = null;
+    this.scenario = clone(j.scenario); delete this.scenario._node;
+    this.edited = true;
+    this.engine = j.engine || "python"; $("#engine").value = this.engine;
+    this.runCache.set(this.cacheKey(), j);
+    this.setRun(j);
+  }
+
   async loadPreset(id, run) {
     const p = this.init.presets.find(x => x.id === id);
     this.presetId = id;
     this.scenario = clone(p.scenario);
     this.scenario.name = p.name;
     this.edited = false;
-    this.renderChips();
     if (run) await this.runScenario();
   }
 
@@ -103,7 +233,6 @@ class App {
     const slow = this.edited || !this.ready[this.presetId] || ml;
     this.busy(true, ml ? "Running MATLAB Simulink (Simscape Electrical). The first run starts MATLAB and builds the model, about 1 to 2 minutes; cached results load instantly."
                        : slow ? "Running the three-phase phasor engine (dt = 1/960 s)" : "Loading precomputed results");
-    $("#btn-run").disabled = true;
     try {
       const body = Object.assign({}, this.scenario, { engine: this.engine });
       const r = this.edited
@@ -113,22 +242,19 @@ class App {
       if (j.error) throw new Error(j.error);
       this.runCache.set(key, j);
       if (!this.edited && !ml) { this.ready[this.presetId] = true; }
-      this.renderChips();
+      if (!(this.catalog || []).some(m => m.key === j.id)) await this.loadCatalog();
       this.setRun(j);
     } catch (e) {
       this.toast("Simulation failed: " + e.message);
     } finally {
       this.busy(false);
-      $("#btn-run").disabled = false;
     }
   }
 
   setRun(run) {
     this.run = run;
-    const eb = $("#engine-badge");
-    eb.textContent = run.engine === "matlab" ? "MATLAB Simulink" : "Python engine";
-    eb.className = "engine-badge" + (run.engine === "matlab" ? " ml" : "");
-    eb.title = run.engine_label || "";
+    this.renderRunSel();
+    this._kpiStatic = null;
     this.busIdx = Object.fromEntries(run.buses.map((b, i) => [b, i]));
     this.brIdx = Object.fromEntries(run.branches.map((b, i) => [b, i]));
     this.iedIdx = Object.fromEntries(run.ied.map((d, i) => [d.id, i]));
@@ -215,7 +341,6 @@ class App {
     $("#pl-cyc").textContent = `Cycle ${Math.floor(t * r.f0)}`;
     const pct = t / r.T * 100;
     $("#pl-fill").style.width = pct + "%"; $("#pl-head").style.left = pct + "%";
-    $("#scada-clock").textContent = `RTU t = ${tOp.toFixed(2)} s, ${clock(tOp)}`;
     this.renderKPI(k);
     this.renderAlarms(tOp);
     this.renderSOE(t);
@@ -225,19 +350,35 @@ class App {
 
   renderKPI(k) {
     const r = this.run;
-    const pA = r.Pbr[k][this.brIdx[this.brForIED("A1")]]?.[0];
-    const pB = r.Pbr[k][this.brIdx[this.brForIED("B1")]]?.[0];
-    const pd = r.der.reduce((s, d) => s + (d.on[k] ? (d.P[k] || 0) : 0), 0);
-    let vmin = 9, vb = "";
-    r.buses.forEach((b, i) => { if (b.startsWith("F")) return; for (const v of r.Vpu[k][i]) if (v !== null && v < vmin && v > 0.05) { vmin = v; vb = b; } });
-    const st = vStatus(vmin);
-    $("#kpi").innerHTML = [
-      ["Frequency", fmt(r.freq[k], 3), "Hz"],
-      ["Feeder A Power", fmt(pA, 0), "kW"],
-      ["Feeder B Power", fmt(pB, 0), "kW"],
-      ["Total DER Power", fmt(pd, 0), "kW"],
-      ["Minimum Voltage (energized)", `<span style="color:${st === "crit" ? "#b91c1c" : st === "warn" ? "#b45309" : "inherit"}">${fmt(vmin === 9 ? null : vmin, 3)}</span>`, `pu at ${vb}`],
-    ].map(([l, v, u]) => `<div class="k"><div class="l">${l}</div><div class="v">${v}<small>${u}</small></div></div>`).join("");
+    // Scenario parameters are fixed for a run; only the frequency changes during playback.
+    if (!this._kpiStatic) {
+      const sc = r.scenario || {};
+      // one variable per field; every DER and every fault gets its own fields
+      const LOAD_PCT = { min_siang: 40, menengah: 70, puncak_malam: 100 };
+      const ld = sc.load || {};
+      const loadPct = typeof ld.level === "number" ? ld.level * 100 : LOAD_PCT[ld.level] ?? 100;   // same rule as the engine
+      const f = [];
+      const ders = (sc.der && sc.der.units) || [];
+      if (!ders.length) f.push(["DER", "None", ""]);
+      ders.forEach((d, i) => {
+        const n = ders.length > 1 ? `DER${i + 1} ` : "DER ";
+        f.push([n + "type", d.type, ""], [n + "loc", d.bus, ""], [n + "size", fmt(d.kva, 0), "kVA"]);
+      });
+      f.push(["Load", loadPct != null ? fmt(loadPct, 0) : "N/A", "% peak"]);
+      f.push(["Grid", sc.grid && sc.grid.mode === "island" ? "Islanded" : "Connected", ""]);
+      const faults = sc.faults || [];
+      if (!faults.length) f.push(["Fault", "None", ""]);
+      faults.forEach((x, i) => {
+        const n = faults.length > 1 ? `Fault${i + 1} ` : "Fault ";
+        f.push([n + "type", `${x.type}${x.type === "3PH" ? "" : "-" + String(x.phases || "").toUpperCase()}`, ""], [n + "loc", x.bus || x.line, ""],
+          [n + "Rf", fmt(x.rf ?? 0, 1), "Ω"], [n + "time", fmt(x.t_on, 2), "s"]);
+      });
+      const rel = sc.relays || {};
+      f.push(["Relay class", (rel.default || "OCR") + (Object.keys(rel.classes || {}).length ? " (mixed)" : ""), ""]);
+      this._kpiStatic = f.map(([l, v, u]) => `<div class="k t"><div class="l">${l}</div><div class="v">${esc(v)}${u ? `<small>${u}</small>` : ""}</div></div>`).join("");
+      $("#kpi").innerHTML = `<div class="k"><div class="l">Frequency</div><div class="v" id="kpi-f"></div></div>` + this._kpiStatic;
+    }
+    $("#kpi-f").innerHTML = `${fmt(r.freq[k], 3)}<small>Hz</small>`;
   }
   brForIED(id) {
     const m = this.run.topology.ieds.find(x => x.id === id);
@@ -292,20 +433,20 @@ class App {
   renderHunter() {
     const r = this.run, H = r.hunter;
     const codes = ["F-1", "F-2", "F-3", "F-4", "F-5", "NT"];
-    $("#verdict-mini").innerHTML = codes.slice(0, 5).map(c => `<span class="vchip ${H.counts[c] ? "hit" : ""}" title="${H.codes[c]}">${c}${H.counts[c] ? " (" + H.counts[c] + ")" : ""}</span>`).join("")
-      + (H.findings.length ? "" : `<span class="vchip okk">Correct Operation</span>`);
     const cm = H.confusion;
     const pct = v => v === null || v === undefined ? "N/A" : (v * 100).toFixed(0) + "%";
-    const gts = H.faults.map(f => `<div><b>${f.fault}</b> ${f.type}${f.type === "3PH" ? "" : "-" + (f.phases || "").toUpperCase()} at <b>${f.node}</b> (Feeder ${f.feeder}), Rf ${f.rf} Ω, peak |If| ${fmt(f.If_A, 0)} A. Primary: <b>${f.primary || "none"}</b>, backup: <b>${f.backup || "none"}</b>.</div>`).join("");
+    const num = (n, bad) => `<span class="${n ? (bad ? "n-bad" : "n-ok") : "n-0"}">${n}</span>`;
+    const gts = H.faults.map(f => `<p>${f.fault} ${f.type}${f.type === "3PH" ? "" : "-" + (f.phases || "").toUpperCase()} at bus ${f.node} (Feeder ${f.feeder}), Rf ${f.rf} Ω, peak |If| ${fmt(f.If_A, 0)} A. Primary relay ${f.primary || "none"}, backup ${f.backup || "none"}.</p>`).join("");
     $("#tab-hunter").innerHTML = `<div class="hunt">
-      ${H.faults.length ? `<div class="gt">${gts}</div>` : `<div class="gt">No fault is applied in this scenario. Any trip is therefore a security failure (nuisance trip).</div>`}
-      ${H.findings.length ? "" : `<div class="ok-banner">Conventional relays operated correctly in this scenario (no F-1 to F-5 findings).</div>`}
-      <div class="codes">${codes.map(c => `<div class="cd ${H.counts[c] ? "hit" : ""}"><div class="c">${c}</div><div class="n">${H.counts[c] || 0}</div><div class="d">${CODE_DESC[c]}</div></div>`).join("")}</div>
-      <div class="metric"><div><div class="l">Dependability</div><div class="v">${pct(H.dependability)}</div></div><div><div class="l">Security</div><div class="v">${pct(H.security)}</div></div></div>
-      <div class="cm"><div></div><div class="lb">Tripped</div><div class="lb">Not tripped</div>
-        <div class="lb">Should trip</div><div class="cell tp">TP ${cm.TP}</div><div class="cell fn">FN ${cm.FN}</div>
-        <div class="lb">Should not trip</div><div class="cell fp">FP ${cm.FP}</div><div class="cell tn">TN ${cm.TN}</div></div>
-      ${H.findings.map((f, i) => `<div class="find ${f.code}" data-i="${i}"><div class="fh"><span class="fc">${f.code}</span><span class="ft">${esc(f.title)}</span><span class="tt">${f.t != null ? f.t.toFixed(3) + " s" : ""}</span></div><div class="fx">${esc(f.text)}</div></div>`).join("")}
+      <section><h6>Ground truth</h6>${H.faults.length ? gts : "<p>No fault is applied in this scenario. Any trip is therefore a security failure (nuisance trip).</p>"}</section>
+      <section><h6>Outcome</h6>${H.findings.length ? `<p><span class="st bad">${H.findings.length} finding${H.findings.length > 1 ? "s" : ""}</span> by the Fault Hunter.</p>` : `<p><span class="st ok">Correct operation.</span> Conventional relays operated correctly (no F-1 to F-5 findings).</p>`}
+        <table class="htab"><tbody>${codes.map(c => `<tr class="${H.counts[c] ? "hit" : ""}"><td class="c">${c}</td><td>${CODE_DESC[c]}</td><td class="r">${num(H.counts[c] || 0, true)}</td></tr>`).join("")}</tbody></table></section>
+      <section><h6>Performance</h6>
+        <table class="htab"><tbody><tr><td>Dependability</td><td class="r">${pct(H.dependability)}</td></tr><tr><td>Security</td><td class="r">${pct(H.security)}</td></tr></tbody></table>
+        <table class="htab cmx"><thead><tr><th></th><th class="r">Tripped</th><th class="r">Not tripped</th></tr></thead>
+          <tbody><tr><td>Should trip</td><td class="r">TP ${num(cm.TP, false)}</td><td class="r">FN ${num(cm.FN, true)}</td></tr>
+          <tr><td>Should not trip</td><td class="r">FP ${num(cm.FP, true)}</td><td class="r">TN ${num(cm.TN, false)}</td></tr></tbody></table></section>
+      ${H.findings.length ? `<section><h6>Findings</h6>${H.findings.map((f, i) => `<div class="find" data-i="${i}"><div class="fh"><span class="fc">${f.code}</span><span class="ft">${esc(f.title)}</span><span class="tt">${f.t != null ? f.t.toFixed(3) + " s" : ""}</span></div><div class="fx">${esc(f.text)}</div></div>`).join("")}</section>` : ""}
     </div>`;
     $("#tab-hunter").querySelectorAll(".find").forEach(d => d.onclick = () => {
       const f = H.findings[+d.dataset.i];
@@ -520,8 +661,10 @@ class App {
 
   // wiring
   _wire() {
-    $("#btn-run").onclick = () => this.runScenario();
-    $("#btn-editor").onclick = () => this.editor.open();
+    $("#run-sel").onclick = () => this.openCatalog();
+    $("#cat-x").onclick = () => this.closeCatalog();
+    $("#catalog").addEventListener("mousedown", ev => { if (ev.target.id === "catalog") this.closeCatalog(); });
+    $("#cat-q").oninput = e => { this._catFilters.q = e.target.value; this.renderCatalog(); };
     $("#pl-play").onclick = () => this.playing ? this.pause() : this.play();
     $("#pl-start").onclick = () => this.seek(0);
     $("#pl-end").onclick = () => this.seek(this.run.T);
@@ -551,13 +694,14 @@ class App {
     });
     window.addEventListener("mouseup", () => drag = false);
     window.addEventListener("keydown", ev => {
-      if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT") return;
+      if (ev.code === "Escape" && this._catOpen) { this.closeCatalog(); return; }
+      if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT" || this._catOpen) return;
       if (ev.code === "Space") { ev.preventDefault(); this.playing ? this.pause() : this.play(); }
       if (ev.code === "ArrowLeft") this.seek(this.t - (ev.shiftKey ? 0.1 : 1 / 60));
       if (ev.code === "ArrowRight") this.seek(this.t + (ev.shiftKey ? 0.1 : 1 / 60));
       if (ev.code === "Home") this.seek(0);
       if (ev.code === "End") this.seek(this.run.T);
-      if (ev.code === "Escape") { this.editor.close(); this.insp = null; $("#inspector").classList.add("hidden"); this._closePops(); }
+      if (ev.code === "Escape") { if (this._catOpen) { this.closeCatalog(); return; } this.editor.close(); this.insp = null; $("#inspector").classList.add("hidden"); this._closePops(); }
     });
     window.addEventListener("resize", () => this.scope.drawAll());
   }

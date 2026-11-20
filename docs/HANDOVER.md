@@ -39,7 +39,7 @@ postrun.py --> batch/figures/*.png|pdf, postrun_summary.json  -->  report.py -->
 
 | Berkas | Isi |
 |---|---|
-| `server.py` | Server HTTP lokal (port 8034). API: `/api/init`, `/api/preset?id=&engine=`, `/api/run` (POST skenario), `/api/wave`, `/api/status`, `/batch/...` (melayani hasil post-run). Cache hasil per hash skenario di `cache/runs/<hash>/`. |
+| `server.py` | Server HTTP lokal (port 8034). API: `/api/init`, `/api/preset?id=&engine=`, `/api/run` (POST skenario), `/api/wave`, `/api/status`, `/api/catalog` (daftar run tersimpan), `/api/result?key=`, `/api/labels` (POST), `/batch/...`. Cache hasil per hash skenario di `cache/runs/<hash>/`. |
 | `engine/network.py` | Data IEEE 34 (konfigurasi saluran 300-304, beban spot dan terdistribusi, kapasitor, regulator, XFM-1, trafo GI 2,5 MVA), Penyulang B ekuivalen, 5 titik IED (A1, A2, A3, L1, B1). |
 | `engine/layout.py` | Koordinat SLD saja (dikecualikan dari fingerprint cache). |
 | `engine/sim.py` | Engine Python: solver nodal 3 fasa fasor, dt = 1/960 s, CB buka 50 ms, pulau dan frekuensi, CLPU. |
@@ -62,7 +62,7 @@ postrun.py --> batch/figures/*.png|pdf, postrun_summary.json  -->  report.py -->
 | `batch.py` | Kampanye sweep 5.247 kasus (H1, H2, E, I). Lihat bagian 5. |
 | `postrun.py` | Lima gambar post-run + `postrun_summary.json` + `postrun_tables.csv`. |
 | `report.py` | Laporan PDF Bahasa Indonesia (`batch/Laporan_PostRun_SimRelay34.pdf`). |
-| `web/` | UI: `index.html` (real-time view), `postrun.html` (hasil batch), `js/app.js`, `sld.js`, `scope.js`, `editor.js`, `postrun.js`, `css/app.css`. |
+| `web/` | UI: `index.html`, `js/app.js`, `sld.js`, `scope.js`, `editor.js`, `css/app.css`, `img/logo-stei.png`. Halaman Post-Run dihapus dari UI (skrip `postrun.py`/`report.py` tetap ada). |
 | `Jalankan SimRelay.bat`, `simrelay.ico` | Launcher satu klik untuk Windows (start server + buka Edge). |
 
 ### Engine MATLAB: alur satu simulasi
@@ -134,7 +134,8 @@ Catatan:
 
 Sudah selesai:
 1. Aplikasi web lengkap (tema putih, bahasa Inggris formal), SLD IEEE 34 tanpa tumpang tindih,
-   panah aliran daya beranimasi, osiloskop, SOE, inspector, editor DoF, playback, halaman Post-Run.
+   panah aliran daya beranimasi, osiloskop, SOE, inspector, editor DoF, playback. Halaman Post-Run
+   sempat ada, lalu dihapus dari UI atas permintaan pengguna (akan dibuat ulang bersama katalog batch).
 2. Preset dihitung sebelumnya dan di-cache di disk; ganti preset instan.
 3. Kampanye Python 5.247 run dan post-run lengkap (lihat bagian 5) dengan laporan PDF 17 halaman.
 4. Bug 87L diperbaiki: sampel kedua ujung kini diselaraskan terhadap tunda kanal dan memakai filter
@@ -159,6 +160,22 @@ Sudah selesai:
    - Layout ringkas (viewBox sekitar 1830 x 585). Bus yang kehabisan sisi menjadi busbar
      vertikal: semua sambungan masuk dari samping, dan bus sesudahnya bergeser ke kanan.
    - Alarm SCADA berbentuk tabel formal di panel kanan.
+8. Top bar dan navigasi:
+   - Logo STEI ITB dan judul "SimRelay 34" (font Space Grotesk). Font UI memakai IBM Plex Sans
+     dan IBM Plex Mono.
+   - Keterangan mode (saat ini View). Tombol Start Simulation (satu skenario) dan Start Campaign
+     (banyak skenario) dinonaktifkan selama mode View; fungsinya belum dibuat.
+   - Selector "Run" membuka katalog run tersimpan (preset dan run custom dari `cache/runs`),
+     dilengkapi pencarian, filter (sumber, engine, outcome, tipe DER, tipe gangguan, kelas relai,
+     label), serta Labels dan Notes yang bisa diedit.
+   - Run ID adalah nomor urut run sesuai urutan dihasilkan (0001, 0002, dan seterusnya), tetap
+     setelah diberikan (`runs/index.json`).
+   - Labels dan notes disimpan di `runs/annotations.json`. Preset diberi label awal `PRE-S0` dan
+     seterusnya, dengan notes nama presetnya.
+   - Kasus batch belum masuk katalog (direncanakan nanti).
+   - Aturan gaya UI: tanpa badge, chip, atau kotak bersudut bulat dengan isi berwarna cerah.
+     Status ditulis sebagai teks berwarna dengan penanda kotak kecil, dan pemisah memakai garis
+     tipis.
 
 ## 5. Ringkasan hasil kampanye Python (batch/)
 
@@ -194,7 +211,8 @@ Belum selesai / menunggu keputusan pengguna:
    `progress(stage, percent)`). Yang belum: endpoint `/api/progress`, `progress.json` di batch,
    dan popup di UI. Jangan lanjutkan kecuali diminta lagi.
 5. README belum diperbarui untuk engine MATLAB (dokumen ini yang terbaru).
-6. Laporan PDF dan halaman Post-Run masih memakai hasil engine Python; versi MATLAB menunggu poin 2.
+6. Laporan PDF masih memakai hasil engine Python; versi MATLAB menunggu poin 2. Halaman Post-Run
+   di UI sudah dihapus dan akan dibuat ulang nanti.
 
 Pertanyaan dosen yang sudah dijawab di percakapan (ringkas): dasar penempatan CB/IED dan DER
 (pertimbangan rekayasa, bukan optimasi; IEEE 34 tidak menetapkan perangkat proteksi), metode sweep
