@@ -1,0 +1,6 @@
+numpy
+scipy
+matplotlib
+reportlab
+# MATLAB engine only (needs MATLAB R2024b installed locally):
+# matlabengine==24.2.*

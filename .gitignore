@@ -1,0 +1,19 @@
+# regenerated automatically
+cache/
+runs/
+__pycache__/
+*.pyc
+
+# MATLAB / Simulink artefacts
+*.slx.autosave
+*.slxc
+slprj/
+batch*/io/
+
+# large duplicates (regenerated from results.jsonl by batch.py export)
+batch/batch_results.json
+batch_matlab*/batch_results.json
+
+# logs
+*.log
+batch/batch_log*.txt

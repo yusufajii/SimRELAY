@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SimRelay 34 Test Bench</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%224%22 fill=%22%232563eb%22/%3E%3Cpath d=%22M9 2 5 9h3l-1 5 4-7H8z%22 fill=%22%23fff%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor"/></symbol>
+  <symbol id="i-start" viewBox="0 0 24 24"><rect x="5" y="5" width="2.5" height="14" rx="1" fill="currentColor"/><path d="M19 5.5v13L9 12z" fill="currentColor"/></symbol>
+  <symbol id="i-end" viewBox="0 0 24 24"><rect x="16.5" y="5" width="2.5" height="14" rx="1" fill="currentColor"/><path d="M5 5.5v13L15 12z" fill="currentColor"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-run" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
+</svg>
+<div id="app">
+
+  <!-- Header -->
+  <header id="hdr">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 16 16"><path d="M9 2 5 9h3l-1 5 4-7H8z" fill="#fff"/></svg></div>
+      <div>
+        <div class="b1">SimRelay 34</div>
+        <div class="b2">IEEE 34-Bus Protection Test Bench</div>
+      </div>
+    </div>
+    <div class="scen-wrap">
+      <div class="scen-label">Scenarios</div>
+      <div id="scen-chips" class="scen-chips"></div>
+    </div>
+    <div class="hdr-actions">
+      <div id="verdict-mini" class="verdict-mini"></div>
+      <label class="sel eng-sel" title="Simulation engine. MATLAB Simulink runs a Simscape Electrical phasor model built from this app's network, relay logic and events.">Engine
+        <select id="engine"><option value="python">Python (fast)</option><option value="matlab">MATLAB Simulink</option></select>
+      </label>
+      <a class="btn" href="postrun.html" style="text-decoration:none" title="Batch results and Proof of Urgency figures">Post-Run Analysis</a>
+      <button id="btn-editor" class="btn" title="Configure the simulator degrees of freedom (DoF 1 to 4)"><svg class="ic"><use href="#i-sliders"/></svg>Scenario Editor</button>
+      <button id="btn-run" class="btn primary"><svg class="ic"><use href="#i-run"/></svg>Run Simulation</button>
+    </div>
+  </header>
+
+  <!-- Main grid -->
+  <main id="grid">
+
+    <!-- Operator SCADA -->
+    <section id="p-scada" class="panel">
+      <div class="ph">
+        <span class="tag op">Operator View</span>
+        <span class="ttl">Single-Line Diagram</span>
+        <span class="engine-badge" id="engine-badge"></span>
+        <span class="sub" id="scada-clock"></span>
+        <div class="tools">
+          <label class="tg"><input type="checkbox" id="ov-god" checked> Ground truth overlay</label>
+          <label class="tg"><input type="checkbox" id="ov-flow" checked> Power flow</label>
+          <label class="tg"><input type="checkbox" id="ov-val" checked> Values</label>
+          <label class="sel">RTU scan
+            <select id="scan-rate">
+              <option value="0.01">Ideal (10 ms)</option>
+              <option value="0.2">200 ms</option>
+              <option value="1">1 s</option>
+              <option value="2">2 s</option>
+            </select>
+          </label>
+          <button class="btn tiny icon-only" id="btn-fit" title="Reset view"><svg class="ic"><use href="#i-fit"/></svg></button>
+        </div>
+      </div>
+      <div id="kpi" class="kpi"></div>
+      <div class="pb sld-host" id="sld-host">
+        <svg id="sld" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="inspector" class="inspector hidden"></div>
+      </div>
+      <div class="sld-foot">
+        <div id="sld-legend" class="sld-legend"></div>
+      </div>
+      <div id="alarm-strip" class="alarm-strip"></div>
+    </section>
+
+    <!-- Field SOE -->
+    <section id="p-field" class="panel">
+      <div class="ph">
+        <span class="tag field">Field Records</span>
+        <span class="ttl">Relay Sequence of Events</span>
+        <div class="tools">
+          <select id="soe-filter"><option value="">All IEDs</option></select>
+          <label class="tg"><input type="checkbox" id="soe-all"> Show all</label>
+        </div>
+      </div>
+      <div class="pb soe-host">
+        <div class="soe-note">Records downloaded from field IEDs, time-stamped by each IED. The operator receives these only after the event.</div>
+        <table class="soe" id="soe-relay"><thead><tr><th>IED Time</th><th>IED</th><th>Record</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- Ground truth -->
+    <section id="p-god" class="panel">
+      <div class="ph">
+        <span class="tag god">Ground Truth</span>
+        <span class="ttl">Multi-Channel Oscilloscope</span>
+        <div class="tools">
+          <label class="sel">Window
+            <select id="scope-win">
+              <option value="0.05">50 ms</option>
+              <option value="0.1">100 ms</option>
+              <option value="0.25" selected>250 ms</option>
+              <option value="1">1 s</option>
+              <option value="0">Full</option>
+            </select>
+          </label>
+          <button class="btn tiny" id="btn-addrow"><svg class="ic"><use href="#i-plus"/></svg>Add Channel</button>
+        </div>
+      </div>
+      <div class="pb god-body">
+        <div id="scope" class="scope"></div>
+        <div class="god-side">
+          <div class="tabs" id="god-tabs">
+            <button class="tab on" data-tab="simsoe">Simulator Events</button>
+            <button class="tab" data-tab="hunter">Fault Analysis</button>
+          </div>
+          <div class="tabpane on" id="tab-simsoe">
+            <table class="soe" id="soe-sim"><thead><tr><th>Time (s)</th><th>Physical Event</th></tr></thead><tbody></tbody></table>
+          </div>
+          <div class="tabpane" id="tab-hunter"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Playback -->
+  <footer id="play">
+    <div class="pl-btns">
+      <button class="btn icon" id="pl-start" title="Go to start (Home)"><svg class="ic"><use href="#i-start"/></svg></button>
+      <button class="btn icon" id="pl-back" title="Back one cycle (Left)"><svg class="ic"><use href="#i-back"/></svg></button>
+      <button class="btn icon big" id="pl-play" title="Play or pause (Space)"><svg class="ic"><use href="#i-play"/></svg></button>
+      <button class="btn icon" id="pl-fwd" title="Forward one cycle (Right)"><svg class="ic"><use href="#i-fwd"/></svg></button>
+      <button class="btn icon" id="pl-end" title="Go to end (End)"><svg class="ic"><use href="#i-end"/></svg></button>
+      <select id="pl-speed" title="Playback speed">
+        <option value="0.02">0.02x</option><option value="0.05">0.05x</option>
+        <option value="0.1">0.1x</option><option value="0.25" selected>0.25x</option>
+        <option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option>
+      </select>
+    </div>
+    <div class="pl-time"><span id="pl-t">0.000</span><span class="slash">/</span><span id="pl-T">0.000 s</span></div>
+    <div class="pl-track" id="pl-track">
+      <div class="pl-rail"></div>
+      <div class="pl-fill" id="pl-fill"></div>
+      <div id="pl-marks"></div>
+      <div class="pl-head" id="pl-head"></div>
+      <div class="pl-tip" id="pl-tip"></div>
+    </div>
+    <div class="pl-cyc" id="pl-cyc">Cycle 0</div>
+  </footer>
+
+  <!-- Scenario editor drawer -->
+  <aside id="drawer" class="drawer">
+    <div class="dr-head">
+      <div>
+        <div class="dr-t">Scenario Editor</div>
+        <div class="dr-s" id="dr-name"></div>
+      </div>
+      <button class="btn tiny icon-only" id="dr-close" title="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="dr-tabs" id="dr-tabs">
+      <button class="on" data-d="dof1">DoF 1<small>DER</small></button>
+      <button data-d="dof2">DoF 2<small>Load and Grid</small></button>
+      <button data-d="dof3">DoF 3<small>Faults</small></button>
+      <button data-d="dof4">DoF 4<small>Relays</small></button>
+      <button data-d="sim">Simulation<small>Timing</small></button>
+    </div>
+    <div class="dr-body" id="dr-body"></div>
+    <div class="dr-foot">
+      <button class="btn" id="dr-reset">Reset to Preset</button>
+      <button class="btn primary" id="dr-run"><svg class="ic"><use href="#i-run"/></svg>Run Scenario</button>
+    </div>
+  </aside>
+
+  <div id="busy" class="busy hidden"><div class="busy-card"><div class="spin"></div><div id="busy-t">Running the phasor engine</div></div></div>
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
