@@ -12,12 +12,12 @@ export class Scope {
   catalog(run) {
     const g = [];
     const ieds = run.ied.map(d => d.id);
-    g.push({ label: "IED (sensor points)", items: ieds.flatMap(i => [[`ied:${i}:I`, `${i}: phase current`], [`ied:${i}:V`, `${i}: bus voltage`]]) });
+    g.push({ label: "Instrument transformers (relay inputs)", items: ieds.flatMap(i => [[`ied:${i}:I`, `CT-${i}: phase currents`], [`ied:${i}:V`, `VT-${i}: phase voltages`]]) });
     if (run.faults.length) g.push({ label: "Fault (ground truth only)", items: run.faults.map(f => [`fault:${f.id}:I`, `${f.id}: fault point current (${f.node})`]) });
     if (run.der.length) g.push({ label: "DER", items: run.der.flatMap(d => [[`der:${d.id}:I`, `${d.id}: output current`], [`tl:derpq:${d.id}`, `${d.id}: P and Q (kW, kvar)`]].concat(d.irr ? [[`tl:irr:${d.id}`, `${d.id}: irradiance (W/m²)`]] : [])) });
     g.push({ label: "System", items: [["tl:freq", "Frequency (Hz)"]].concat(ieds.map(i => [`tl:prog:${i}`, `${i}: 51P and 51N integrator progress`])) });
-    g.push({ label: "Bus voltage", items: run.buses.filter(b => !b.startsWith("F")).map(b => [`bus:${b}:V`, `Bus ${b}`]) });
-    g.push({ label: "Branch current", items: run.branches.map(b => [`br:${b}:I`, b]) });
+    g.push({ label: "Simulator probe: bus voltage", items: run.buses.filter(b => !b.startsWith("F")).map(b => [`bus:${b}:V`, `Bus ${b}`]) });
+    g.push({ label: "Simulator probe: branch current", items: run.branches.map(b => [`br:${b}:I`, b]) });
     return g;
   }
 
@@ -28,7 +28,9 @@ export class Scope {
     this.cat = this.catalog(run);
     this.host.innerHTML = "";
     this.rows = [];
+    this._ready = false;
     for (const d of defaults) this.addRow(d[0], d[1] || "inst");
+    this._ready = true;
   }
 
   addRow(sig, mode = "inst") {
@@ -62,6 +64,7 @@ export class Scope {
     cv.addEventListener("click", ev => { const t = this.xToT(row, ev.offsetX); this.app.seek(t); });
     this.rows.push(row);
     this.load(row);
+    if (this.run && this._ready) div.scrollIntoView({ block: "nearest", behavior: "smooth" });
     return row;
   }
 
