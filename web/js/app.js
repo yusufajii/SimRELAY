@@ -316,7 +316,7 @@ class App {
     const dt = Math.min((ts - this.last) / 1000, 0.1); this.last = ts;
     this.t += dt * this.speed;
     if (this.t >= this.run.T) { this.t = this.run.T; this.render(); this.pause(); return; }
-    this.render();
+    this.render(false);
     requestAnimationFrame(x => this.tick(x));
   }
 
@@ -336,27 +336,34 @@ class App {
     return st;
   }
 
-  render() {
+  // full = false during playback: panels whose data frame has not changed are left as they are.
+  render(full = true) {
     const r = this.run; if (!r) return;
     const t = this.t;
     const scan = Number($("#scan-rate").value);
     const tOp = scan > 0.011 ? Math.floor(t / scan) * scan : t;
     const k = this.frameAt(tOp), kG = this.frameAt(t);
     this.kOp = k; this.kG = kG;
-    const iedState = this.iedStateAt(tOp);
-    this.sld.update({ run: r, k, kGod: kG, t, iedState, iedClass: this.iedClass });
+    const fkey = `${r.id}|${k}|${kG}`, changed = full || fkey !== this._fkey;
+    this._fkey = fkey;
+    const iedState = changed ? this.iedStateAt(tOp) : this._iedState;
+    this._iedState = iedState;
+    if (changed) this.sld.update({ run: r, k, kGod: kG, t, iedState, iedClass: this.iedClass });
     // waktu
     $("#pl-t").textContent = t.toFixed(3);
     $("#pl-cyc").textContent = `Cycle ${Math.floor(t * r.f0)}`;
     const pct = t / r.T * 100;
     $("#pl-fill").style.width = pct + "%"; $("#pl-head").style.left = pct + "%";
-    this.renderKPI(k);
-    this.tiles.update(r, k, iedState);
-    this.relayChart.draw();
-    this.renderSOE(t);
-    this.scope.drawAll();
-    this.phasor.draw();
-    if (this.insp) this.renderInspector();
+    if (changed) {
+      this.renderKPI(k);
+      this.tiles.update(r, k, iedState, !full && this.playing);
+      this.relayChart.draw();
+      this.renderSOE(t);
+      this.phasor.draw();
+      if (this.insp) this.renderInspector();
+    }
+    const now = performance.now();
+    if (full || now - (this._scopeAt || 0) > 32) { this._scopeAt = now; this.scope.drawAll(); }
   }
 
   renderKPI(k) {

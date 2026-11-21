@@ -410,7 +410,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         if not self.path.startswith("/api/"):
-            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Cache-Control", "no-store")   # always serve the current UI files
         super().end_headers()
 
     def _bytes(self, body, code=200):
