@@ -1,9 +1,12 @@
 // SimRelay 34: main application
 import { SLD, vStatus, LAYERS, QTY, FUNC } from "./sld.js";
 import { Scope } from "./scope.js";
+import { PhasorView } from "./phasor.js";
 import { Editor } from "./editor.js";
 
-const $ = s => document.querySelector(s);
+// Panels can live in detached windows, so lookups search the main document and every detached one.
+const DOCS = [document];
+const $ = s => { for (const d of DOCS) { const e = d.querySelector(s); if (e) return e; } return null; };
 const fmt = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v)) ? "N/A" : Number(v).toFixed(d);
 const icon = id => `<svg class="ic"><use href="#i-${id}"/></svg>`;
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -20,7 +23,9 @@ class App {
     this.engine = "python";         // simulation engine: "python" or "matlab" (MATLAB Simulink)
     try { this.engine = localStorage.getItem("sr34-engine") || "python"; } catch (e) { /* storage unavailable */ }
     this.sld = new SLD($("#sld"), $("#sld-host"), this);
+    this.detached = {};
     this.scope = new Scope($("#scope"), this);
+    this.phasor = new PhasorView(this);
     this.editor = new Editor(this);
     this._wire();
     this.boot();
@@ -276,15 +281,13 @@ class App {
     this.sld.build(run.topology, run, this.layout);
     // kanal default osiloskop
     const hf = run.hunter.faults[0];
-    const rows = [["ied:A1:I", "inst"]];
-    if (hf && hf.primary && hf.primary !== "A1") rows.push([`ied:${hf.primary}:I`, "inst"]);
-    if (run.faults.length) rows.push([`fault:F1:I`, "inst"], [`bus:${run.faults[0].node}:V`, "inst"]);
-    else rows.push(["ied:A1:V", "inst"], ["tl:prog:A1", "series"]);
-    if (run.der.length && rows.length < 5) rows.push([`der:${run.der[0].id}:I`, "inst"]);
+    const pri = hf && hf.primary ? hf.primary : "A1";
+    const rows = [[`ied:${pri}:I`, "inst"], [`ied:${pri}:V`, "inst"]];
+    if (run.faults.length) rows.push([`fault:F1:I`, "inst"]);
+    if (run.der.length) rows.push([`der:${run.der[0].id}:I`, "inst"]);
     this.scope.setRun(run, rows);
     // SOE filter
     const f = $("#soe-filter"); f.innerHTML = `<option value="">All IEDs</option>` + run.ied.map(d => `<option>${d.id}</option>`).join("");
-    this.renderHunter();
     this.renderMarks();
     $("#pl-T").textContent = run.T.toFixed(3) + " s";
     const t0 = run.faults.length ? Math.max(run.faults[0].t_on - 0.08, 0) : 0;
@@ -345,6 +348,7 @@ class App {
     this.renderAlarms(tOp);
     this.renderSOE(t);
     this.scope.drawAll();
+    this.phasor.draw();
     if (this.insp) this.renderInspector();
   }
 
@@ -413,9 +417,6 @@ class App {
     const tb = $("#soe-relay tbody");
     tb.innerHTML = rows.map(e => `<tr class="k-${e.kind}${e.t > t ? " future" : ""}"><td>${clock(e.t)}</td><td><span class="iedtag">${e.id}</span></td><td>${esc(e.text.replace(e.id + " ", ""))}</td></tr>`).join("")
       || `<tr><td colspan="3" class="empty">No IED records up to t = ${t.toFixed(3)} s</td></tr>`;
-    const srows = r.events_sim.filter(e => all || e.t <= t + 1e-9);
-    $("#soe-sim tbody").innerHTML = srows.map(e => `<tr class="s-${e.type}${e.t > t ? " future" : ""}"><td>${e.t.toFixed(4)}</td><td>${esc(e.text)}</td></tr>`).join("")
-      || `<tr><td colspan="2" class="empty">No physical events yet</td></tr>`;
   }
 
   renderMarks() {
@@ -430,34 +431,76 @@ class App {
     }
   }
 
-  renderHunter() {
-    const r = this.run, H = r.hunter;
-    const codes = ["F-1", "F-2", "F-3", "F-4", "F-5", "NT"];
-    const cm = H.confusion;
-    const pct = v => v === null || v === undefined ? "N/A" : (v * 100).toFixed(0) + "%";
-    const num = (n, bad) => `<span class="${n ? (bad ? "n-bad" : "n-ok") : "n-0"}">${n}</span>`;
-    const gts = H.faults.map(f => `<p>${f.fault} ${f.type}${f.type === "3PH" ? "" : "-" + (f.phases || "").toUpperCase()} at bus ${f.node} (Feeder ${f.feeder}), Rf ${f.rf} Ω, peak |If| ${fmt(f.If_A, 0)} A. Primary relay ${f.primary || "none"}, backup ${f.backup || "none"}.</p>`).join("");
-    $("#tab-hunter").innerHTML = `<div class="hunt">
-      <section><h6>Ground truth</h6>${H.faults.length ? gts : "<p>No fault is applied in this scenario. Any trip is therefore a security failure (nuisance trip).</p>"}</section>
-      <section><h6>Outcome</h6>${H.findings.length ? `<p><span class="st bad">${H.findings.length} finding${H.findings.length > 1 ? "s" : ""}</span> by the Fault Hunter.</p>` : `<p><span class="st ok">Correct operation.</span> Conventional relays operated correctly (no F-1 to F-5 findings).</p>`}
-        <table class="htab"><tbody>${codes.map(c => `<tr class="${H.counts[c] ? "hit" : ""}"><td class="c">${c}</td><td>${CODE_DESC[c]}</td><td class="r">${num(H.counts[c] || 0, true)}</td></tr>`).join("")}</tbody></table></section>
-      <section><h6>Performance</h6>
-        <table class="htab"><tbody><tr><td>Dependability</td><td class="r">${pct(H.dependability)}</td></tr><tr><td>Security</td><td class="r">${pct(H.security)}</td></tr></tbody></table>
-        <table class="htab cmx"><thead><tr><th></th><th class="r">Tripped</th><th class="r">Not tripped</th></tr></thead>
-          <tbody><tr><td>Should trip</td><td class="r">TP ${num(cm.TP, false)}</td><td class="r">FN ${num(cm.FN, true)}</td></tr>
-          <tr><td>Should not trip</td><td class="r">FP ${num(cm.FP, true)}</td><td class="r">TN ${num(cm.TN, false)}</td></tr></tbody></table></section>
-      ${H.findings.length ? `<section><h6>Findings</h6>${H.findings.map((f, i) => `<div class="find" data-i="${i}"><div class="fh"><span class="fc">${f.code}</span><span class="ft">${esc(f.title)}</span><span class="tt">${f.t != null ? f.t.toFixed(3) + " s" : ""}</span></div><div class="fx">${esc(f.text)}</div></div>`).join("")}</section>` : ""}
-    </div>`;
-    $("#tab-hunter").querySelectorAll(".find").forEach(d => d.onclick = () => {
-      const f = H.findings[+d.dataset.i];
-      if (f.t != null) this.seek(Math.max(f.t - 0.03, 0));
-      if (f.ied) this.inspect("ied", f.ied, null);
+  // ---- output waveform and phasor panels
+  q(sel) { return $(sel); }
+  onScopeChange() { this.updateAddBtn(); this.phasor.refresh(); }
+  updateAddBtn() { const b = $("#btn-addrow"); if (b) { b.disabled = !this.scope.canAdd(); b.title = b.disabled ? "Two channels fit in the main window. Open the panel in a separate window for more." : "Add a channel"; } }
+  isDetached(id) { return !!this.detached[id]; }
+  redrawPanels() { this.scope.drawAll(); this.phasor._k = null; this.phasor.draw(); }
+
+  // Panel sizes: the waveform and phasor row height, the phasor width and the alarms width.
+  _layout() {
+    const grid = $("#grid");
+    const L = { bh: 300, pw: 460, rw: 380 };
+    try { Object.assign(L, JSON.parse(localStorage.getItem("sr34-layout") || "{}")); } catch (e) { /* storage unavailable */ }
+    const apply = () => { grid.style.setProperty("--bh", L.bh + "px"); grid.style.setProperty("--pw", L.pw + "px"); grid.style.setProperty("--rw", L.rw + "px"); };
+    const save = () => { try { localStorage.setItem("sr34-layout", JSON.stringify(L)); } catch (e) { /* storage unavailable */ } };
+    apply();
+    const drag = (id, onMove) => $(id).addEventListener("mousedown", ev => {
+      ev.preventDefault();
+      const start = { x: ev.clientX, y: ev.clientY, ...L };
+      document.body.classList.add("resizing");
+      const mv = e => { onMove(e.clientX - start.x, e.clientY - start.y, start); apply(); this.redrawPanels(); };
+      const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); document.body.classList.remove("resizing"); save(); this.redrawPanels(); };
+      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
     });
-    if (H.findings.length) this.showTab("hunter");
+    const H = () => grid.clientHeight, W = () => grid.clientWidth;
+    drag("#split-h", (dx, dy, s0) => { L.bh = Math.min(Math.max(s0.bh - dy, 140), H() - 220); });
+    drag("#split-r", (dx, dy, s0) => { L.rw = Math.min(Math.max(s0.rw - dx, 260), W() - 520); });
+    drag("#split-v", (dx, dy, s0) => { L.pw = Math.min(Math.max(s0.pw - dx, 300), $("#bottom").clientWidth - 320); });
   }
-  showTab(n) {
-    document.querySelectorAll("#god-tabs .tab").forEach(b => b.classList.toggle("on", b.dataset.tab === n));
-    document.querySelectorAll(".god-side .tabpane").forEach(p => p.classList.toggle("on", p.id === "tab-" + n));
+
+  // A panel moves into its own browser window and stays in sync; Attach or closing the window brings it back.
+  detach(id) {
+    if (this.detached[id]) return this.attach(id);
+    const panel = $("#" + id), slot = panel.parentNode;
+    const r = panel.getBoundingClientRect();
+    const w = window.open("", "sr34-" + id, `width=${Math.round(Math.max(r.width, 640))},height=${Math.round(Math.max(r.height, 420))}`);
+    if (!w) { this.toast("The browser blocked the new window. Allow pop-ups for this page and try again."); return; }
+    const title = panel.querySelector(".ttl").textContent;
+    const fonts = document.querySelector('link[href*="fonts.googleapis.com/css2"]');
+    w.document.open();
+    w.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>SimRelay 34: ${title}</title><link rel="icon" href="${location.origin}/img/logo-stei.png">${fonts ? `<link rel="stylesheet" href="${fonts.href}">` : ""}<link rel="stylesheet" href="${location.origin}/css/app.css"></head><body class="detached"></body></html>`);
+    w.document.close();
+    w.document.body.appendChild(w.document.importNode(document.querySelector("svg[aria-hidden]"), true));
+    w.document.body.appendChild(w.document.adoptNode(panel));
+    DOCS.push(w.document);
+    this.detached[id] = { w, slot };
+    this._detUI(id, true);
+    w.addEventListener("pagehide", () => { if (this.detached[id]) this.attach(id, true); });
+    w.addEventListener("resize", () => this.redrawPanels());
+    w.addEventListener("keydown", ev => this._onKey(ev));
+    if (id === "p-wave") this.updateAddBtn();
+    setTimeout(() => this.redrawPanels(), 60);
+  }
+  attach(id, closing) {
+    const d = this.detached[id]; if (!d) return;
+    const panel = d.w.document.getElementById(id);
+    delete this.detached[id];
+    const i = DOCS.indexOf(d.w.document); if (i > 0) DOCS.splice(i, 1);
+    if (panel) d.slot.appendChild(document.adoptNode(panel));
+    if (!closing) d.w.close();
+    this._detUI(id, false);
+    if (id === "p-wave") this.scope.trim();
+    setTimeout(() => this.redrawPanels(), 30);
+  }
+  _detUI(id, on) {
+    const b = $(`.det-btn[data-panel="${id}"]`);
+    if (b) { b.innerHTML = `<svg class="ic"><use href="#i-${on ? "attach" : "detach"}"/></svg>`; b.title = on ? "Return to the main window" : "Open in a separate window"; }
+    const g = $("#grid");
+    g.classList.toggle("no-wave", this.isDetached("p-wave"));
+    g.classList.toggle("no-phasor", this.isDetached("p-phasor"));
+    g.classList.toggle("no-field", this.isDetached("p-field"));
   }
 
   // inspector: a static part (title, display options, actions) and a body refreshed every frame
@@ -674,13 +717,16 @@ class App {
     $("#btn-fit").onclick = () => this.sld.fit();
     for (const id of ["#scan-rate", "#soe-all", "#soe-filter"]) $(id).onchange = () => { this._soeKey = null; this.render(); };
     document.querySelectorAll("#rec-tabs .tab").forEach(b => b.onclick = () => {
-      document.querySelectorAll("#rec-tabs .tab").forEach(x => x.classList.toggle("on", x === b));
-      document.querySelectorAll(".rec-host .tabpane").forEach(p => p.classList.toggle("on", p.id === "tab-" + b.dataset.tab));
+      const panel = b.closest(".panel");
+      panel.querySelectorAll("#rec-tabs .tab").forEach(x => x.classList.toggle("on", x === b));
+      panel.querySelectorAll(".rec-host .tabpane").forEach(p => p.classList.toggle("on", p.id === "tab-" + b.dataset.tab));
     });
+    document.querySelectorAll(".det-btn").forEach(b => b.onclick = () => this.detach(b.dataset.panel));
+    this._layout();
+    window.addEventListener("beforeunload", () => { for (const d of Object.values(this.detached)) d.w.close(); });
     this._popovers();
     $("#scope-win").onchange = e => { this.scope.win = Number(e.target.value); this.scope.drawAll(); };
     $("#btn-addrow").onclick = () => this.scope.addRow("ied:A1:V", "inst");
-    document.querySelectorAll("#god-tabs .tab").forEach(b => b.onclick = () => this.showTab(b.dataset.tab));
     const track = $("#pl-track");
     let drag = false;
     const tAt = ev => { const rc = track.getBoundingClientRect(); return Math.min(Math.max((ev.clientX - rc.left) / rc.width, 0), 1) * (this.run?.T || 0); };
@@ -693,7 +739,11 @@ class App {
       if (drag) this.seek(tAt(ev));
     });
     window.addEventListener("mouseup", () => drag = false);
-    window.addEventListener("keydown", ev => {
+    window.addEventListener("keydown", ev => this._onKey(ev));
+    window.addEventListener("resize", () => this.redrawPanels());
+  }
+  _onKey(ev) {
+    {
       if (ev.code === "Escape" && this._catOpen) { this.closeCatalog(); return; }
       if (ev.target.tagName === "INPUT" || ev.target.tagName === "SELECT" || this._catOpen) return;
       if (ev.code === "Space") { ev.preventDefault(); this.playing ? this.pause() : this.play(); }
@@ -702,8 +752,7 @@ class App {
       if (ev.code === "Home") this.seek(0);
       if (ev.code === "End") this.seek(this.run.T);
       if (ev.code === "Escape") { if (this._catOpen) { this.closeCatalog(); return; } this.editor.close(); this.insp = null; $("#inspector").classList.add("hidden"); this._closePops(); }
-    });
-    window.addEventListener("resize", () => this.scope.drawAll());
+    }
   }
 
   // Layers and Key popovers
