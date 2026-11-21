@@ -57,7 +57,7 @@ export class PhasorView {
     }
     const live = rows.find(r => r.i === 0 && Math.hypot(r.re, r.im) > 1e-6);
     const ref = live ? Math.atan2(live.im, live.re) : 0;
-    this.host("#ph-ref").textContent = live ? `Angles are referred to channel ${live.c.no} phase A (${live.c.name}). N is the phasor sum of A, B and C. Values are fundamental components.` : "No phasor is available at this time.";
+    this.refText = live ? `channel ${live.c.no} phase A (${live.c.name})` : "";
     // table
     tb.innerHTML = rows.map(r => {
       const mag = Math.hypot(r.re, r.im);
@@ -66,7 +66,7 @@ export class PhasorView {
       const d = r.unit === "kV" ? 3 : 1;
       return `<tr class="${r.i === 0 ? "first" : ""}"><td class="ch"><i style="background:${PH[r.i]}"></i>${r.c.no}${PL[r.i]}</td><td>${r.i === 0 ? `${r.c.name}` : ""}</td>` +
         `<td class="r">${fmt(mag, d)} ${r.unit}</td><td class="r">${fmt(mag * Math.SQRT2, d)}</td><td class="r">${ang === null ? "N/A" : fmt(ang, 1) + "°"}</td><td class="r">${fmt(inst, d)}</td></tr>`;
-    }).join("") || `<tr><td colspan="6" class="empty">Add a current or voltage channel to the output waveform to see its phasors.</td></tr>`;
+    }).join("");
     // polar diagram: each channel scaled to its own largest phasor
     svg.innerHTML = "";
     const el = (tag, a, p = svg) => { const e = svg.ownerDocument.createElementNS(NS, tag); for (const [x, y] of Object.entries(a)) e.setAttribute(x, y); p.appendChild(e); return e; };
