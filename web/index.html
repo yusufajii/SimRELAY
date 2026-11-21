@@ -23,6 +23,8 @@
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
   <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-run" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
+  <symbol id="i-detach" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-attach" viewBox="0 0 24 24"><path d="M10 20H4v-6M4 20l8-8M6 10V5a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4 3 9l9 5 9-5zM3 14l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
@@ -88,11 +90,14 @@
       </div>
     </section>
 
+    <div class="split split-r" id="split-r" title="Drag to resize"></div>
+
     <!-- Alarms and relay records -->
+    <div class="slot" id="slot-field">
     <section id="p-field" class="panel">
       <div class="ph">
-        <span class="tag field">Records</span>
-        <span class="ttl">Alarms and Events</span>
+        <span class="ttl caps">Alarms and Events</span>
+        <div class="tools"><button class="btn tiny icon-only det-btn" data-panel="p-field" title="Open in a separate window"><svg class="ic"><use href="#i-detach"/></svg></button></div>
       </div>
       <div class="tabs" id="rec-tabs">
         <button class="tab on" data-tab="alarms">SCADA Alarm List <span class="cnt" id="al-cnt"></span></button>
@@ -114,38 +119,51 @@
       </div>
     </section>
 
-    <!-- Ground truth -->
-    <section id="p-god" class="panel">
-      <div class="ph">
-        <span class="tag god">Ground Truth</span>
-        <span class="ttl">Multi-Channel Oscilloscope</span>
-        <div class="tools">
-          <label class="sel">Window
-            <select id="scope-win">
-              <option value="0.05">50 ms</option>
-              <option value="0.1">100 ms</option>
-              <option value="0.25" selected>250 ms</option>
-              <option value="1">1 s</option>
-              <option value="0">Full</option>
-            </select>
-          </label>
-          <button class="btn tiny" id="btn-addrow"><svg class="ic"><use href="#i-plus"/></svg>Add Channel</button>
-        </div>
-      </div>
-      <div class="pb god-body">
-        <div id="scope" class="scope"></div>
-        <div class="god-side">
-          <div class="tabs" id="god-tabs">
-            <button class="tab on" data-tab="simsoe">Simulator Events</button>
-            <button class="tab" data-tab="hunter">Fault Analysis</button>
+    </div>
+
+    <div class="split split-h" id="split-h" title="Drag to resize"></div>
+
+    <!-- Output waveform and phasor -->
+    <div id="bottom">
+      <div class="slot" id="slot-wave">
+      <section id="p-wave" class="panel">
+        <div class="ph">
+          <span class="ttl caps">Output Waveform</span>
+          <div class="tools">
+            <label class="sel">Window
+              <select id="scope-win">
+                <option value="0.05">50 ms</option>
+                <option value="0.1">100 ms</option>
+                <option value="0.25" selected>250 ms</option>
+                <option value="1">1 s</option>
+                <option value="0">Full</option>
+              </select>
+            </label>
+            <button class="btn tiny" id="btn-addrow"><svg class="ic"><use href="#i-plus"/></svg>Add Channel</button>
+            <button class="btn tiny icon-only det-btn" data-panel="p-wave" title="Open in a separate window"><svg class="ic"><use href="#i-detach"/></svg></button>
           </div>
-          <div class="tabpane on" id="tab-simsoe">
-            <table class="soe" id="soe-sim"><thead><tr><th>Time (s)</th><th>Physical Event</th></tr></thead><tbody></tbody></table>
-          </div>
-          <div class="tabpane" id="tab-hunter"></div>
         </div>
+        <div class="pb"><div id="scope" class="scope"></div></div>
+      </section>
       </div>
-    </section>
+      <div class="split split-v" id="split-v" title="Drag to resize"></div>
+      <div class="slot" id="slot-phasor">
+      <section id="p-phasor" class="panel">
+        <div class="ph">
+          <span class="ttl caps">Output Phasor</span>
+          <span class="ph-t" id="ph-time"></span>
+          <div class="tools"><button class="btn tiny icon-only det-btn" data-panel="p-phasor" title="Open in a separate window"><svg class="ic"><use href="#i-detach"/></svg></button></div>
+        </div>
+        <div class="pb ph-body">
+          <div class="ph-polar"><svg id="ph-polar" viewBox="-130 -130 260 260"></svg></div>
+          <div class="ph-tab">
+            <table class="pht2" id="ph-table"><thead><tr><th>Ch</th><th>Signal</th><th class="r">RMS</th><th class="r">Peak</th><th class="r">Phase</th><th class="r">Inst</th></tr></thead><tbody></tbody></table>
+            <div class="ph-ref" id="ph-ref"></div>
+          </div>
+        </div>
+      </section>
+      </div>
+    </div>
   </main>
 
   <!-- Playback -->
