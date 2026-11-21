@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SimRelay 34 Test Bench</title>
-<link rel="icon" href="img/logo-stei.png">
+<title>SimRELAY Test Bench</title>
+<link rel="icon" href="img/simrelay-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@600;700&display=swap">
@@ -28,15 +28,15 @@
   <symbol id="i-caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4 3 9l9 5 9-5zM3 14l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/></symbol>
-  <symbol id="i-key" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M8 9.5h8M8 14.5h5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+  <symbol id="i-simulink" viewBox="0 0 24 24"><rect x="3" y="8" width="6" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.9"/><rect x="15" y="8" width="6" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M9 12h6M12.5 10l2.5 2-2.5 2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-key"viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M8 9.5h8M8 14.5h5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
 </svg>
 <div id="app">
 
   <!-- Header -->
   <header id="hdr">
     <div class="brand">
-      <img class="logo-img" src="img/logo-stei.png" alt="STEI ITB">
-      <div class="b1">SimRelay<span>34</span></div>
+      <img class="logo-img" src="img/simrelay-logo.png" alt="SimRELAY, powered by MATLAB Simulink">
     </div>
     <div class="mode-cap" title="The workspace is in View mode: stored runs can be browsed and played back.">
       <span class="mc-l">Mode</span><span class="mc-v">View</span>
@@ -72,6 +72,7 @@
             <button class="btn tiny" id="btn-key" title="Symbols and colour convention"><svg class="ic"><use href="#i-key"/></svg>Key</button>
             <div class="pop pop-key hidden" id="pop-key"></div>
           </div>
+          <button class="btn tiny" id="btn-simulink" title="Build this scenario as a Simscape Electrical model and open it in the Simulink Editor"><svg class="ic"><use href="#i-simulink"/></svg>Simulink</button>
           <label class="sel">RTU scan
             <select id="scan-rate">
               <option value="0.01">Ideal (10 ms)</option>

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SimRelay 34: Post-Run visualization (Proof of Urgency).
+SimRELAY: Post-Run visualization (Proof of Urgency).
 
     python postrun.py
 

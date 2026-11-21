@@ -1,4 +1,4 @@
-// SimRelay 34: main application
+// SimRELAY: main application
 import { SLD, vStatus, LAYERS, QTY, FUNC } from "./sld.js";
 import { Scope } from "./scope.js";
 import { PhasorView } from "./phasor.js";
@@ -48,6 +48,13 @@ class App {
     }
     sel.value = this.engine;
     sel.onchange = () => this.setEngine(sel.value);
+    const sb = $("#btn-simulink");
+    if (!this.init.matlab_available) {
+      sb.disabled = true;
+      sb.title = "MATLAB is not available on this computer (MATLAB Engine API for Python is not installed)";
+    }
+    sb.onclick = () => this.openSimulink();
+    if (this.init.matlab_available) this.watchSimulink();     // a model opened earlier may still be run
     this.baseLoadKW = this.init.topology.loads.filter(l => l.feeder === "A").reduce((s, l) => s + l.P.reduce((a, c) => a + c, 0), 0);
     await this.loadCatalog();
     this.busy(false);
@@ -117,7 +124,7 @@ class App {
     const F = this._catFilters, runs = this.catalog || [];
     const uniq = a => [...new Set(a)].filter(x => x !== undefined && x !== null && x !== "").sort();
     const opts = {
-      source: [["", "All sources"], ["preset", "Preset"], ["custom", "Custom"]],
+      source: [["", "All sources"], ["preset", "Preset"], ["custom", "Custom"], ["simulink", "Simulink Editor"]],
       engine: [["", "All engines"], ["python", "Python"], ["matlab", "MATLAB Simulink"]],
       outcome: [["", "All outcomes"], ["OK", "Correct operation"], ...["F-1", "F-2", "F-3", "F-4", "F-5", "NT"].map(c => [c, `${c} ${CODE_DESC[c]}`])],
       der: [["", "All DER types"], ["none", "No DER"], ...uniq(runs.flatMap(m => m.der.map(d => d.type))).map(t => [t, t])],
@@ -160,7 +167,7 @@ class App {
         <td>${esc(this.faultText(m))}</td>
         <td>${esc(m.relay)}${Object.keys(m.relay_overrides || {}).length ? " (mixed)" : ""}</td>
         <td>${out(m)}</td>
-        <td>${m.engine === "matlab" ? "MATLAB" : "Python"}</td>
+        <td>${m.source === "simulink" ? "MATLAB<div class=\"meta\">Simulink Editor</div>" : m.engine === "matlab" ? "MATLAB" : "Python"}</td>
         <td class="dt">${esc(m.created)}</td></tr>`).join("")
       || `<tr><td colspan="9" class="empty">${runs.length ? "No stored run matches the search and filters." : "Loading stored runs"}</td></tr>`;
     $("#cat-count").textContent = runs.length ? `${list.length} of ${runs.length} runs` : "";
@@ -258,6 +265,40 @@ class App {
     } finally {
       this.busy(false);
     }
+  }
+
+  // Build the scenario on screen as a Simscape Electrical model and open it in the Simulink Editor.
+  async openSimulink() {
+    if (!this.scenario || this._slBusy) return;
+    this._slBusy = true;
+    this.busy(true, "Opening the Simulink model. The first time starts MATLAB and builds the model, about 1 minute.");
+    try {
+      const r = await fetch("/api/simulink/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this.scenario) });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      this.toastInfo("The Simulink model is open in MATLAB. Press Run in the Simulink Editor; the result will appear here automatically.", 8000);
+      this.watchSimulink();
+    } catch (e) {
+      this.toast("The Simulink model could not be opened: " + e.message);
+    } finally {
+      this.busy(false);
+      this._slBusy = false;
+    }
+  }
+
+  // After the model is opened, watch for runs started from the Simulink Editor and show each one.
+  async watchSimulink() {
+    if (this._slWatch) return;
+    try { this._slSeen = (await (await fetch("/api/simulink/last")).json()).key; } catch (e) { this._slSeen = null; }
+    this._slWatch = setInterval(async () => {
+      let j;
+      try { j = await (await fetch("/api/simulink/last")).json(); } catch (e) { return; }
+      if (!j.key || j.key === this._slSeen) return;
+      this._slSeen = j.key;
+      await this.loadCatalog();
+      await this.openRun(j.key);
+      this.toastInfo(`The run made in the Simulink Editor is shown as ${j.run_id}.`, 6000);
+    }, 2500);
   }
 
   setRun(run) {
@@ -520,7 +561,7 @@ class App {
     const title = panel.querySelector(".ttl").textContent;
     const fonts = document.querySelector('link[href*="fonts.googleapis.com/css2"]');
     w.document.open();
-    w.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>SimRelay 34: ${title}</title><link rel="icon" href="${location.origin}/img/logo-stei.png">${fonts ? `<link rel="stylesheet" href="${fonts.href}">` : ""}<link rel="stylesheet" href="${location.origin}/css/app.css"></head><body class="detached"></body></html>`);
+    w.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>SimRELAY: ${title}</title><link rel="icon" href="${location.origin}/img/simrelay-icon.png">${fonts ? `<link rel="stylesheet" href="${fonts.href}">` : ""}<link rel="stylesheet" href="${location.origin}/css/app.css"></head><body class="detached"></body></html>`);
     w.document.close();
     w.document.body.appendChild(w.document.importNode(document.querySelector("svg[aria-hidden]"), true));
     w.document.body.appendChild(w.document.adoptNode(panel));
@@ -847,9 +888,9 @@ class App {
     });
   }
 
-  toastInfo(m) {
+  toastInfo(m, ms = 2500) {
     const t = $("#toast"); t.textContent = m; t.classList.remove("hidden"); t.classList.add("info");
-    clearTimeout(this._tt); this._tt = setTimeout(() => { t.classList.add("hidden"); t.classList.remove("info"); }, 2500);
+    clearTimeout(this._tt); this._tt = setTimeout(() => { t.classList.add("hidden"); t.classList.remove("info"); }, ms);
   }
   busy(on, txt) { $("#busy").classList.toggle("hidden", !on); if (txt) $("#busy-t").textContent = txt; }
   toast(m) { const t = $("#toast"); t.textContent = m; t.classList.remove("hidden"); clearTimeout(this._tt); this._tt = setTimeout(() => t.classList.add("hidden"), 6000); }

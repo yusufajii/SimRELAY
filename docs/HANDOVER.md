@@ -1,4 +1,4 @@
-# SimRelay 34: dokumen serah-terima (handover)
+# SimRELAY: dokumen serah-terima (handover)
 
 Ditulis 20 November 2026 untuk melanjutkan pekerjaan di sesi lain. Dokumen ini menjelaskan
 apa yang sudah dibangun, bagaimana arsitekturnya, cara menjalankannya, apa yang sudah
@@ -61,9 +61,9 @@ postrun.py --> batch/figures/*.png|pdf, postrun_summary.json  -->  report.py -->
 | `matlab/sr34_polarity_test.m` | Uji konvensi polaritas blok SPS (lihat jebakan teknis). |
 | `batch.py` | Kampanye sweep 5.247 kasus (H1, H2, E, I). Lihat bagian 5. |
 | `postrun.py` | Lima gambar post-run + `postrun_summary.json` + `postrun_tables.csv`. |
-| `report.py` | Laporan PDF Bahasa Indonesia (`batch/Laporan_PostRun_SimRelay34.pdf`). |
-| `web/` | UI: `index.html`, `js/app.js`, `sld.js`, `scope.js`, `editor.js`, `css/app.css`, `img/logo-stei.png`. Halaman Post-Run dihapus dari UI (skrip `postrun.py`/`report.py` tetap ada). |
-| `Jalankan SimRelay.bat`, `simrelay.ico` | Launcher satu klik untuk Windows (start server + buka Edge). |
+| `report.py` | Laporan PDF Bahasa Indonesia (`batch/Laporan_PostRun_SimRELAY.pdf`). |
+| `web/` | UI: `index.html`, `js/app.js`, `sld.js`, `scope.js`, `editor.js`, `css/app.css`, `img/simrelay-logo.png` (logo), `img/simrelay-icon.png` (ikon dan favicon). Halaman Post-Run dihapus dari UI (skrip `postrun.py`/`report.py` tetap ada). |
+| `Jalankan SimRELAY.bat`, `simrelay.ico` | Launcher satu klik untuk Windows (start server + buka Edge). |
 
 ### Engine MATLAB: alur satu simulasi
 
@@ -109,6 +109,18 @@ tetapi dengan penyederhanaan atau nilai parameter yang dipilih sendiri):
 
 Lingkungan yang dipakai: Windows 11, Python 3.11, RAM 7,7 GB, MATLAB R2024b Update 1.
 
+PC kedua (Windows 10, RAM 11,9 GB, 4 thread, MATLAB R2024b Update 10, 21 November 2026): Python
+bawaan 3.14 tidak didukung `matlabengine` 24.2 (hanya 3.9 sampai 3.12). Dipasang Python 3.11.9
+berdampingan, dengan lingkungan proyek `.venv` (numpy, scipy, matplotlib, reportlab,
+`matlabengine==24.2.*`). `Jalankan SimRELAY.bat` dan `.claude/launch.json` otomatis memakai
+`.venv\Scripts\python.exe` bila ada. Uji: S0 engine MATLAB 83 s (termasuk build), trip identik
+dengan Python, selisih tegangan maks 0,0017 pu; tombol Simulink membangun dan membuka model komposit.
+
+```bash
+py -3.11 -m venv .venv
+.venv\Scripts\python -m pip install numpy scipy matplotlib reportlab "matlabengine==24.2.*"
+```
+
 ```bash
 pip install numpy scipy matplotlib reportlab
 pip install "matlabengine==24.2.*"      # hanya untuk engine MATLAB
@@ -146,7 +158,7 @@ Sudah selesai:
      Fault Hunter identik dengan engine Python, replay mismatch 0.
    - Pilot parfor 121 kasus (`batch_matlab_pilot/`): 121/121 identik dengan Python, 0 gagal,
      selisih waktu trip rata-rata 0,6 ms (maks 13,5 ms, 153 trip), 19,8 menit dengan 2 worker.
-6. Launcher satu klik (`Jalankan SimRelay.bat`) dan shortcut desktop (dibuat ulang di PC baru).
+6. Launcher satu klik (`Jalankan SimRELAY.bat`) dan shortcut desktop (dibuat ulang di PC baru).
 7. Revisi kanvas SLD (`web/js/sld.js`, `engine/layout.py`):
    - Simbol IEC 60617 (CB tetap kotak SCADA), relai = kotak "R" dengan kabel CT/VT dan trip ke CB.
    - Layer komponen dan teks (tombol Layers), Key, dan ceklis besaran per komponen di info box.
@@ -161,7 +173,7 @@ Sudah selesai:
      vertikal: semua sambungan masuk dari samping, dan bus sesudahnya bergeser ke kanan.
    - Alarm SCADA berbentuk tabel formal di panel kanan.
 8. Top bar dan navigasi:
-   - Logo STEI ITB dan judul "SimRelay 34" (font Space Grotesk). Font UI memakai IBM Plex Sans
+   - Logo SimRELAY ("powered by MATLAB Simulink") di top bar; nama aplikasi kini SimRELAY. Font UI memakai IBM Plex Sans
      dan IBM Plex Mono.
    - Keterangan mode (saat ini View). Tombol Start Simulation (satu skenario) dan Start Campaign
      (banyak skenario) dinonaktifkan selama mode View; fungsinya belum dibuat.
@@ -202,6 +214,37 @@ Sudah selesai:
       dipakai di tabel SOE (`web/js/icons.js`).
     - Tabel nilai di Output Waveform hanya untuk kanal non-fasor; nilai arus dan tegangan cukup
       di tabel Output Phasor.
+
+9. Interkoneksi Simulink dari UI (21 November 2026):
+   - Tombol **Simulink** di toolbar SLD (`/api/simulink/open` -> `matlab/sr34_open.m`) membangun model
+     skenario yang sedang tampil, menyimpannya ke `cache/simulink/sr34_model.slx`, lalu membuka Simulink Editor.
+   - Model berhierarki dan mengikuti SLD web: busbar hitam per bus (berisi pengukuran tegangan),
+     subsystem per saluran/regulator/trafo (dengan CB dan CT titik proteksi), beban/kapasitor/DER/gangguan
+     menggantung di bawah bus, sumber GI di kiri bus 800, kontroler di subsystem "Measurements and control".
+     Sinyal lewat Goto/From global (V<n>, I<ch>, B<ch>, U<ch>, J<ch>). Pengelompokan dari bridge
+     (`Netlist.group`, `cfg.groups`, `cfg.bus_xy`); path blok di `sr34_paths.m`. Rangkaian listrik identik:
+     4 run MATLAB lama dijalankan ulang, arus/trip/temuan sama persis.
+   - Tata letak di `sr34_build.m`: trunk disejajarkan port-ke-port (garis lurus), lateral di barisnya sendiri,
+     rute ortogonal dengan kolom per fasa, cek tabrakan antarbaris (bus digeser ke kanan bila bertumpuk).
+     Jebakan: Connection Port hanya menerima satu garis; port subsystem boleh dicabangkan asal port baru
+     disebut pertama di `add_line`; vektor kosong 0x1 menjalankan `for` sekali.
+   - Tombol **Run** di Simulink: `InitFcn`/`StopFcn` (`sr34_editor.m`) memuat konfigurasi dari
+     `cache/simulink/sr34_model_cfg.json`, me-reset kontroler, lalu mengirim simV/simI/log ke
+     `/api/simulink/import`; server memprosesnya dengan `load_results` yang sama dan UI memuatnya otomatis
+     (polling `/api/simulink/last`). Hasil uji identik dengan run engine. Run engine (`sr34_run`) memasang
+     `SR34_ENGINE` sehingga callback tidak ikut campur, dan meminta `ReturnWorkspaceOutputs` 'on'.
+   - Perubahan ini mengubah fingerprint MATLAB, jadi cache run MATLAB lama dihitung ulang saat dibuka.
+   - Komposit buatan sendiri (opsi B, dipilih pengguna dibanding blok tiga fasa bawaan SPS karena blok
+     bawaan memaksa saluran tertransposisi, tidak menampung lateral 1 fasa dan tap regulator per fasa,
+     serta memutus kecocokan dengan engine Python): setiap kelompok adalah subsystem bermask dengan
+     ikon simbol SLD (`icon` di `sr34_build.m`), dialog berisi parameter dari bridge (`groups[].kind`,
+     `groups[].info`), dan isi tertata deterministik (`glayout`: satu baris per fasa, kolom mengikuti
+     aliran arus; delta vertikal; sumber terkendali diputar 'left'). Banner "SimRELAY" dengan ikon SimRELAY.
+     Isinya tetap blok SPS standar. Port pitch 20 px (Simulink membulatkan jarak port ke kelipatan 5) dan
+     posisi blok ditetapkan ulang setelah port dibuat (Simulink membesarkan subsystem saat port ditambah).
+   - Validasi setelah komposit: 4 run MATLAB lama identik (arus, trip, temuan); run dari editor untuk
+     "Blinding in IBR Microgrid" identik dengan run engine sampai pembulatan floating-point (~1e-7 relatif).
+   - Belum: uji setara per komponen terhadap blok bawaan dan benchmark aliran daya IEEE 34 (untuk Bab 3).
 
 ## 5. Ringkasan hasil kampanye Python (batch/)
 

@@ -1,5 +1,5 @@
 function y = sr34_ctrl(u, cmd)
-%SR34_CTRL SimRelay controller, called by the Simulink model once per time step.
+%SR34_CTRL SimRELAY controller, called by the Simulink model once per time step.
 %   u = [tau; real(V); imag(V); real(Imeas); imag(Imeas)] with V and Imeas in peak phasors.
 %   Runs, in this order (same order as the app's Python engine):
 %     1. virtual IEDs (OCR 50/51, DOCR 67, Distance 21, Differential 87L) on the measured phasors,

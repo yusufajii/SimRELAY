@@ -1,4 +1,5 @@
 # regenerated automatically
+.venv/
 cache/
 runs/
 __pycache__/

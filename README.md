@@ -1,4 +1,4 @@
-# SimRelay·34 — SIL Proof-of-Urgency Test Bench (IEEE 34 Bus)
+# SimRELAY — SIL Proof-of-Urgency Test Bench (IEEE 34 Bus)
 
 Test bench Software-in-the-Loop untuk **memburu kesalahan relai konvensional** akibat
 penetrasi DER pada IEEE 34 Node Test Feeder. Engine sementara memakai Python
