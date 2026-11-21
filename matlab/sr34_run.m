@@ -17,6 +17,9 @@ if ~bdIsLoaded(mdl) || ~strcmp(strtok(get_param(mdl, 'Tag'), ':'), key)   % Tag 
 else
     sr34_update(cfg, mdl);               % same structure: only update block values
 end
+if isfield(cfg, 'slx_file') && ~isempty(cfg.slx_file) && ~isfile(cfg.slx_file)
+    sr34_store_model(mdl, cfg.slx_file); % campaign: keep one SLX per topology
+end
 tb = toc(t0);
 sr34_progress(cfg, 'sim', 0, cfg.T + cfg.t_init);
 SR34_ENGINE = true;                      % the editor callbacks (sr34_editor) stay out of engine runs

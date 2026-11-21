@@ -48,31 +48,10 @@ CACHE = os.path.join(ROOT, "cache")
 RUN_CACHE = os.path.join(CACHE, "runs")
 
 
-def _engine_fingerprint():
-    h = hashlib.sha1()
-    for p in sorted(glob.glob(os.path.join(ROOT, "engine", "*.py"))):
-        if os.path.basename(p) in ("layout.py", "matlab_bridge.py"):   # display / MATLAB-only code
-            continue
-        with open(p, "rb") as f:
-            h.update(f.read())
-    return h.hexdigest()[:16]
+import campaign                                                         # noqa: E402
 
-
-FINGERPRINT = _engine_fingerprint()
-
-
-def _matlab_fingerprint():
-    """MATLAB engine results also depend on matlab/*.m and the bridge."""
-    h = hashlib.sha1(FINGERPRINT.encode())
-    for p in sorted(glob.glob(os.path.join(ROOT, "matlab", "*.m"))) + [os.path.join(ROOT, "engine", "matlab_bridge.py")]:
-        if os.path.basename(p) in ("sr34_open.m", "sr34_editor.m"):   # editor only, never changes results
-            continue
-        with open(p, "rb") as f:
-            h.update(f.read())
-    return h.hexdigest()[:16]
-
-
-MATLAB_FP = _matlab_fingerprint()
+FINGERPRINT = campaign.engine_fingerprint()
+MATLAB_FP = campaign.matlab_fingerprint(FINGERPRINT)
 try:
     import importlib.util
     MATLAB_AVAILABLE = importlib.util.find_spec("matlab.engine") is not None
@@ -180,43 +159,88 @@ def get_result(sc, save_log=False):
 
 
 SIMULINK_DIR = os.path.join(CACHE, "simulink")
+SIMULINK_MODELS = os.path.join(SIMULINK_DIR, "models")      # one .slx per topology for runs outside a campaign
 SIMULINK_LAST = {"key": None, "run_id": None, "t": 0.0}     # last run made from the Simulink Editor
 SERVER_URL = "http://127.0.0.1:8034"
 
 
-def open_in_simulink(sc):
-    """Build the Simulink model of one scenario, save it as .slx and open it in the Simulink Editor.
+def run_dir(key):
+    """Folder of a stored run: a campaign run folder, or cache/runs/<key>."""
+    return campaign.STORE.folder(key) or os.path.join(RUN_CACHE, key)
 
-    Uses the same netlist export, builder and MATLAB session as the MATLAB engine, so the diagram
-    shown is exactly the model that engine simulates. The scenario and configuration are kept in
-    cache/simulink so that a run started from the editor can be processed by import_simulink_run.
-    Kept here rather than in the bridge so that the MATLAB result cache fingerprint is not
-    affected. Returns the path of the saved .slx file.
+
+def read_result(key):
+    """result.json bytes of a stored run, or None."""
+    d = run_dir(key)
+    p = os.path.join(d, "result.json")
+    if os.path.exists(p):
+        with open(p, "rb") as f:
+            return f.read()
+    p += ".gz"
+    if os.path.exists(p):                  # campaign run: the stored payload carries the case key
+        j = campaign.read_json(p)
+        j["id"] = key                      # the app asks for waveforms with the campaign run key
+        return json.dumps(j, allow_nan=False, default=str).encode()
+    return None
+
+
+def open_in_simulink(sc, key=None):
+    """Open the Simulink model of one scenario in the Simulink Editor.
+
+    Every network topology is kept as one .slx file: models/T###.slx of a campaign for campaign
+    runs, cache/simulink/models/sr34_<structure key>.slx for any other scenario. A stored model is
+    opened directly and only receives the values of this scenario; a topology that has no file yet
+    is built once (same netlist export and builder as the MATLAB engine) and then stored. The
+    configuration and scenario are kept in cache/simulink so that a run started from the editor
+    can be processed by import_simulink_run. Kept here rather than in the bridge so that the
+    MATLAB result cache fingerprint is not affected. Returns (path of the .slx file, built).
     """
     from engine.matlab_bridge import SESSION, export_config
-    cfg, _ = export_config(copy.deepcopy(sc), SETTINGS)
-    cfg["name"] = str(sc.get("name") or "custom scenario")
+    rd = campaign.STORE.folder(key) if key else None
+    if rd:                                         # campaign run: its own scenario and configuration
+        sc = campaign.read_json(os.path.join(rd, "scenario.json"))
+        cfg = campaign.read_json(os.path.join(rd, "cfg.json.gz"))
+        cfg.pop("slx_file", None)
+        _, stored = campaign.topology_of(rd)
+        sc["name"] = cfg["name"] = os.path.basename(rd)
+    else:
+        cfg, _ = export_config(copy.deepcopy(sc), SETTINGS)
+        cfg["name"] = str(sc.get("name") or "custom scenario")
+        stored = os.path.join(SIMULINK_MODELS, f"sr34_{cfg['structure_key']}.slx")
+    mdl = os.path.splitext(os.path.basename(stored))[0]
+    built = not os.path.exists(stored)
     os.makedirs(SIMULINK_DIR, exist_ok=True)
-    _write_json(os.path.join(SIMULINK_DIR, "scenario.json"), sc)
+    _write_json(os.path.join(SIMULINK_DIR, f"{mdl}_scenario.json"), sc)
     with SESSION.lock:
         eng = SESSION.start()
         cf = os.path.join(SESSION.tmp, f"cfg_open_{os.getpid()}.json")
         with open(cf, "w") as f:
             json.dump(cfg, f)
-        return eng.sr34_open(cf, SIMULINK_DIR, SERVER_URL, nargout=1)
+        return eng.sr34_open(cf, SIMULINK_DIR, SERVER_URL, mdl, stored, nargout=1), built
 
 
-def import_simulink_run(mat_path):
+def import_simulink_run(mat_path, cfg_path=None):
     """Process a run made with the Run button of the Simulink Editor exactly like an engine run.
 
     The measured phasors and controller log go through the same load_results, Fault Hunter and
     packing as a MATLAB engine run, and the result is stored in the run cache as a new run.
+    CFG_PATH is the configuration the editor ran (<model>_cfg.json in cache/simulink); the
+    scenario was saved next to it as <model>_scenario.json when the model was opened.
     """
     import scipy.io
     from engine.matlab_bridge import load_results
-    with open(os.path.join(SIMULINK_DIR, "scenario.json")) as f:
+    if not cfg_path:
+        cfg_path = os.path.join(SIMULINK_DIR, "sr34_model_cfg.json")
+    base = os.path.realpath(SIMULINK_DIR)
+    cfg_path = os.path.realpath(cfg_path)
+    if not cfg_path.startswith(base + os.sep) or not cfg_path.endswith("_cfg.json"):
+        raise ValueError("The configuration of the Simulink Editor run is not in cache/simulink.")
+    sc_path = cfg_path[:-len("_cfg.json")] + "_scenario.json"
+    if not os.path.exists(sc_path):
+        sc_path = os.path.join(SIMULINK_DIR, "scenario.json")      # models opened before this version
+    with open(sc_path) as f:
         sc = json.load(f)
-    with open(os.path.join(SIMULINK_DIR, "sr34_model_cfg.json")) as f:
+    with open(cfg_path) as f:
         cfg = json.load(f)
     mat = scipy.io.loadmat(mat_path, squeeze_me=True, struct_as_record=False)
     sim = load_results(Simulator, copy.deepcopy(sc), SETTINGS, cfg, mat)
@@ -244,7 +268,7 @@ def get_wave(key):
         if key in WAVES:
             WAVES.move_to_end(key)
             return WAVES[key]
-    folder = os.path.join(RUN_CACHE, key)
+    folder = run_dir(key)
     if not os.path.exists(os.path.join(folder, "wave.npz")):
         return None
     src = WaveSource.load(folder)
@@ -450,7 +474,30 @@ def catalogue():
         m["labels"] = a.get("labels", [])
         m["notes"] = a.get("notes", "")
     runs.sort(key=lambda m: m["run_no"], reverse=True)
-    return {"runs": runs}
+    # Campaign runs keep their own IDs (PoU-0001 ...) and follow the ordinary runs in ID order.
+    camp = campaign.STORE.catalogue_rows()
+    for m in camp:
+        a = ann.get(m["key"]) or {}
+        m["labels"] = a.get("labels", [])
+        m["notes"] = a.get("notes", "")
+    camp.sort(key=lambda m: (m["campaign"] != campaign.NAME, m["campaign"], m["run_id"]))
+    return {"runs": runs + camp}
+
+
+def reveal(key):
+    """Open the folder of a stored run in Windows Explorer (the server runs on the user's PC)."""
+    folder = run_dir(key)
+    if not os.path.isdir(folder):
+        raise FileNotFoundError("The folder of this run does not exist any more.")
+    if sys.platform.startswith("win"):
+        os.startfile(folder)                                   # noqa: S606 (local desktop action)
+    elif sys.platform == "darwin":
+        import subprocess
+        subprocess.Popen(["open", folder])
+    else:
+        import subprocess
+        subprocess.Popen(["xdg-open", folder])
+    return folder
 
 
 def precompute_all():
@@ -522,11 +569,10 @@ class Handler(SimpleHTTPRequestHandler):
                 key = q["key"][0]
                 if not all(c in "0123456789abcdef" for c in key):
                     return self._json({"error": "invalid key"}, 400)
-                res_p = os.path.join(RUN_CACHE, key, "result.json")
-                if not os.path.exists(res_p):
+                body = read_result(key)
+                if body is None:
                     return self._json({"error": "This run is no longer in the cache."}, 404)
-                with open(res_p, "rb") as f:
-                    return self._bytes(f.read())
+                return self._bytes(body)
             if u.path == "/api/runs":
                 d = os.path.join(ROOT, "runs")
                 items = sorted(os.listdir(d)) if os.path.isdir(d) else []
@@ -568,14 +614,25 @@ class Handler(SimpleHTTPRequestHandler):
             if u.path == "/api/simulink/open":
                 if not MATLAB_AVAILABLE:
                     return self._json({"error": "MATLAB Engine API for Python is not installed."}, 503)
+                key = body.pop("_run_key", None)
+                if key is not None and not all(c in "0123456789abcdef" for c in str(key)):
+                    return self._json({"error": "invalid key"}, 400)
                 sc = {k: v for k, v in body.items() if k != "engine"}
                 t0 = time.time()
-                slx = open_in_simulink(sc)
-                print(f"[SimRELAY] Opened {sc.get('name') or 'custom scenario'} in Simulink in {time.time() - t0:.1f} s ({slx}).")
-                return self._json({"ok": True, "slx": slx})
+                slx, built = open_in_simulink(sc, key)
+                print(f"[SimRELAY] Opened {sc.get('name') or key or 'custom scenario'} in Simulink in {time.time() - t0:.1f} s "
+                      f"({'built and stored' if built else 'stored model'}: {slx}).")
+                return self._json({"ok": True, "slx": slx, "built": built})
             if u.path == "/api/simulink/import":
-                key, rid = import_simulink_run(str(body["mat"]))
+                key, rid = import_simulink_run(str(body["mat"]), body.get("cfg"))
                 return self._json({"ok": True, "key": key, "run_id": rid})
+            if u.path == "/api/reveal":
+                key = str(body.get("key", ""))
+                if not key or not all(c in "0123456789abcdef" for c in key):
+                    return self._json({"error": "invalid key"}, 400)
+                if self.client_address[0] not in ("127.0.0.1", "::1"):
+                    return self._json({"error": "Folders can only be opened from this computer."}, 403)
+                return self._json({"ok": True, "folder": reveal(key)})
             if u.path == "/api/labels":
                 key = str(body["key"])
                 if not all(c in "0123456789abcdef" for c in key):

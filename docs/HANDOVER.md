@@ -264,6 +264,12 @@ dengan ukuran 0-120% beban puncak Penyulang A (1.769 kW), x 11 kasus gangguan
 
 ## 6. Status dan langkah berikutnya
 
+**Pekerjaan berikutnya: campaign "Proof of Urgencies TA Proteksi Adaptif" (PoU).** Rencana lengkap,
+kondisi kode, dan pertanyaan yang menunggu jawaban ada di `docs/CAMPAIGN_PoU.md` (21 November 2026).
+Campaign ini menggantikan butir 2 di bawah: sweep 5.247 kasus dijalankan dengan engine MATLAB,
+model Simulink disimpan per topologi, tombol Simulink membuka file yang tersimpan, dan ada tombol
+Go to Folder di Run selector.
+
 Belum selesai / menunggu keputusan pengguna:
 1. **Keputusan fidelitas model MATLAB** (ditanyakan, belum dijawab):
    (a) tetap seperti sekarang dan tabel bagian 2 dicantumkan sebagai metodologi;

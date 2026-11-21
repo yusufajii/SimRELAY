@@ -163,7 +163,8 @@ export class RelayChart {
 
   draw() {
     const run = this.app.run, svg = this.app.q("#rc-svg"); if (!run || !svg) return;
-    const id = this.sel, k = this.app.kOp ?? 0;
+    // kOp may still hold the frame of the previous, longer run while a new run is being set up
+    const id = this.sel, k = Math.min(this.app.kOp ?? 0, run.t.length - 1);
     const cls0 = run.ied[this.app.iedIdx[id]].cls;
     const ssig = `${run.id}|${id}|${cls0}|${!!(this.cache[run.id] || {})[`ied:${id}:I`]}`;
     const sig = `${ssig}|${k}`;
@@ -180,15 +181,20 @@ export class RelayChart {
     const d = run.ied[this.app.iedIdx[id]], s = this.app.init.settings[id], m = run.topology.ieds.find(x => x.id === id);
     const cls = d.cls;
     const info = this.app.q("#rc-info");
-    const curveName = (this.app.init.curves || {})[s.curve] || s.curve;
     // settings as a table, same style as the phasor table
     const tab = (head, rows) => `<table class="pht2 rc-tab"><thead><tr>${head.map((h, j) => `<th${j ? ' class="r"' : ""}>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, j) => `<td${j ? ' class="r"' : ' class="ch"'}>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-    if (cls === "OCR" || cls === "DOCR") info.innerHTML = tab(["Element", "Pickup", "TMS", "Curve", ...(cls === "DOCR" ? ["Direction"] : [])], [
-      ["51P", `${s["51P_pu"]} A`, s["51P_tms"], esc(curveName), ...(cls === "DOCR" ? ["Forward"] : [])],
-      ...(s["51N_pu"] ? [["51N", `${s["51N_pu"]} A`, s["51N_tms"], esc(curveName), ...(cls === "DOCR" ? ["Forward"] : [])]] : []),
-      ...(s["50P_pu"] ? [["50P", `${s["50P_pu"]} A`, "", "Instantaneous", ...(cls === "DOCR" ? ["Forward"] : [])]] : []),
-      ...(s["50N_pu"] ? [["50N", `${s["50N_pu"]} A`, "", "Instantaneous", ...(cls === "DOCR" ? ["Forward"] : [])]] : []),
-    ]);
+    // One row per measured quantity: phase (50/51P) and neutral (50/51N). Pickup lists the
+    // instantaneous setting before the timed one. Timer is the time delay at the measured current
+    // (Inst. above the instantaneous pickup, N/A below the timed pickup). The Meas. swatch is the
+    // operating-point line on the curve: same colour (relay state) and same line style.
+    if (cls === "OCR" || cls === "DOCR") {
+      const col = this.opColor(id, k);
+      const sw = (dash, w, c) => `<svg class="rc-sw" width="20" height="8" viewBox="0 0 20 8"><line x1="1" y1="4" x2="19" y2="4" stroke="${c}" stroke-width="${w}" stroke-dasharray="${dash}"/></svg>`;
+      info.innerHTML = tab(["Element", "Pickup", "TMS", "Meas.", "Timer", ...(cls === "DOCR" ? ["Direction"] : [])],
+        this.units(id, k).map(u => [`${sw(u.dash, u.w, "#1e293b")}${u.name}`, u.inst ? `${u.inst} / ${u.pu} A` : `${u.pu} A`, u.tms,
+          `${sw(u.mdash, 1.4, col)}${fmt(u.I, 1)} A`, u.I > (u.inst || Infinity) ? "Inst." : u.I > u.pu ? `${fmt(u.top, 3)} s` : "N/A",
+          ...(cls === "DOCR" ? ["Forward"] : [])]));
+    }
     else if (cls === "DIST") info.innerHTML = tab(["Zone", "Reach", "Angle", "Time"], s.zreach.map((z, j) => [`Z${j + 1}`, `${fmt(z, 2)} Ω`, `${fmt(s.ang1 * 180 / Math.PI, 1)}°`, `${fmt(s.ztime[j], 1)} s`]));
     else info.innerHTML = s["87_pu"] ? tab(["Element", "Pickup", "Slope", "Partner"], [["87L", `${s["87_pu"]} A`, `${fmt(s["87_slope"] * 100, 0)}%`, m.partner || "None"]]) : tab(["Element", "Pickup", "Slope", "Partner"], [["87L", "Not set", "", "None"]]);
     if (cls === "DIST") this.rx(d, s, k);
@@ -196,6 +202,24 @@ export class RelayChart {
     else this.tcc(d, s, m, k, cls);
   }
 
+  // Phase and neutral units of an overcurrent relay at sample k, with the curve time at the measured current.
+  units(id, k) {
+    const run = this.app.run, d = run.ied[this.app.iedIdx[id]], s = this.app.init.settings[id];
+    const Iph = Math.max(0, ...d.I[k].filter(x => x !== null)), I0 = d.I0x3[k] || 0;
+    const out = [];
+    for (const [el, I, dash, w, mdash] of [["P", Iph, "", 2, ""], ["N", I0, "5 3", 1.4, "4 3"]]) {
+      const pu = s[`51${el}_pu`], inst = s[`50${el}_pu`];
+      if (!pu) continue;
+      out.push({ name: `${inst ? "50/" : ""}51${el}`, I, pu, inst, tms: s[`51${el}_tms`], dash, w, mdash,
+        top: I > pu ? tOp(s.curve, s[`51${el}_tms`], I / pu) : Infinity });
+    }
+    return out;
+  }
+  // colour of the operating point: red after a trip, violet while picked up, grey otherwise
+  opColor(id, k) {
+    const st = (this.app.iedStateAt(this.app.run.t[k]) || {})[id] || {};
+    return st.trip ? "#dc2626" : st.pick ? "#7c3aed" : "#475569";
+  }
   _el(g) { return (tag, a, txt) => { const e = g.ownerDocument.createElementNS(NS, tag); for (const [x, y] of Object.entries(a)) e.setAttribute(x, y); if (txt !== undefined) e.textContent = txt; g.appendChild(e); return e; }; }
   // static drawing goes to the static layer only when it is rebuilt
   _els() { const sta = this._el(this.gS), dyn = this._el(this.gD), full = this.full; return [full ? sta : () => null, dyn]; }
@@ -232,18 +256,18 @@ export class RelayChart {
     curve(s["51N_pu"], s["51N_tms"], s["50N_pu"], "c-n");
     curve(s["51P_pu"], s["51P_tms"], s["50P_pu"], "c-p");
     // operating point at the RTU time: highest phase current and 3I0
-    const st = (this.app.iedStateAt(this.app.run.t[k]) || {})[m.id] || {};
-    const col = st.trip ? "#dc2626" : st.pick ? "#7c3aed" : "#475569";
+    const col = this.opColor(m.id, k);
     const Iph = Math.max(0, ...d.I[k].filter(x => x !== null)), I0 = d.I0x3[k] || 0;
-    const mark = (i, pu, tms, lab, dash) => {
+    const mark = (i, pu, tms, inst, lab, dash) => {
       if (!(i > x0)) return;
       dl("line", { x1: X(Math.min(i, x1)), y1: T, x2: X(Math.min(i, x1)), y2: H - B, stroke: col, "stroke-width": 1.2, "stroke-dasharray": dash });
-      const t = pu ? tOp(s.curve, tms, i / pu) : Infinity;
+      let t = pu ? tOp(s.curve, tms, i / pu) : Infinity;
+      if (inst && i > inst) t = Math.min(t, 0.02);
       if (t > y0 && t < y1) dl("circle", { cx: X(i), cy: Y(t), r: 3.6, fill: col });
       dl("text", { x: X(Math.min(i, x1)) + 3, y: T + 10 + (dash ? 12 : 0), class: "opl", fill: col }, `${lab} ${fmt(i, 0)} A`);
     };
-    mark(Iph, s["51P_pu"], s["51P_tms"], "I", "");
-    if (s["51N_pu"]) mark(I0, s["51N_pu"], s["51N_tms"], "3I0", "4 3");
+    mark(Iph, s["51P_pu"], s["51P_tms"], s["50P_pu"], "I", "");
+    if (s["51N_pu"]) mark(I0, s["51N_pu"], s["51N_tms"], s["50N_pu"], "3I0", "4 3");
   }
 
   // impedance plane with mho zones and the measured loop impedances
