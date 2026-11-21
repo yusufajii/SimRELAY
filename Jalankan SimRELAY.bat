@@ -1,10 +1,10 @@
 @echo off
-title SimRelay 34
+title SimRELAY
 rem ---------------------------------------------------------------
-rem  SimRelay 34: one-click launcher.
+rem  SimRELAY: one-click launcher.
 rem  Starts the local server (if it is not already running) and
 rem  opens the app in Microsoft Edge at http://127.0.0.1:8034
-rem  To stop the app, close the "SimRelay 34 Server" window.
+rem  To stop the app, close the "SimRELAY Server" window.
 rem ---------------------------------------------------------------
 cd /d "%~dp0"
 set URL=http://127.0.0.1:8034
@@ -24,8 +24,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting SimRelay 34 server...
-start "SimRelay 34 Server" /min %PY% server.py --no-browser
+echo Starting SimRELAY server...
+start "SimRELAY Server" /min %PY% server.py --no-browser
 
 rem Wait up to 120 s for the server to accept connections.
 set /a tries=0
@@ -34,7 +34,7 @@ set /a tries=0
 if %errorlevel%==0 goto open
 set /a tries+=1
 if %tries% geq 120 (
-  echo The server did not start. Check the "SimRelay 34 Server" window for errors.
+  echo The server did not start. Check the "SimRELAY Server" window for errors.
   pause
   exit /b 1
 )

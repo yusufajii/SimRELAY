@@ -1,5 +1,5 @@
 function st = sr34_ctrl_state0(cfg)
-%SR34_CTRL_STATE0 Initial state of the SimRelay controller (relays, DER, breakers, events, log).
+%SR34_CTRL_STATE0 Initial state of the SimRELAY controller (relays, DER, breakers, events, log).
 a = exp(2i*pi/3);
 st.A = [1 1 1; 1 a^2 a; 1 a a^2];          % abc = A * [0;1;2]
 st.Ainv = inv(st.A);

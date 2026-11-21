@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SimRelay 34: batch simulation campaign (parsim equivalent) for the Post-Run analysis.
+SimRELAY: batch simulation campaign (parsim equivalent) for the Post-Run analysis.
 
     python batch.py                 run the full campaign (resumes where it stopped)
     python batch.py --pilot         small pilot subset

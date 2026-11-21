@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SimRelay IEEE-34: Software-in-the-Loop Proof-of-Urgency Test Bench
+SimRELAY: Software-in-the-Loop Proof-of-Urgency Test Bench
 Local server (requires only Python 3.9+ and numpy).
 
     python server.py                 open http://127.0.0.1:8034
@@ -91,13 +91,13 @@ def _load_settings():
             meta = json.load(f)
     if meta.get("fingerprint") == FINGERPRINT and os.path.exists(set_p):
         with open(set_p, "rb") as f:
-            print("[SimRelay] Baseline relay settings loaded from cache.")
+            print("[SimRELAY] Baseline relay settings loaded from cache.")
             return pickle.load(f)
     # Engine changed: every cached run is stale.
     if os.path.isdir(RUN_CACHE):
         import shutil
         shutil.rmtree(RUN_CACHE, ignore_errors=True)
-    print("[SimRelay] Computing baseline relay settings (0% DER, peak load)...")
+    print("[SimRELAY] Computing baseline relay settings (0% DER, peak load)...")
     out = compute_settings()
     with open(set_p, "wb") as f:
         pickle.dump(out, f)
@@ -107,7 +107,7 @@ def _load_settings():
 
 
 SETTINGS, COORD_LOG = _load_settings()
-print("[SimRelay] Settings frozen.")
+print("[SimRELAY] Settings frozen.")
 
 WAVES: "OrderedDict[str, WaveSource]" = OrderedDict()
 WAVE_LOCK = threading.Lock()
@@ -168,7 +168,7 @@ def get_result(sc, save_log=False):
                 json.dump(payload, f, allow_nan=False, default=str)
             os.replace(tmp, res_p)
             _remember_wave(key, src)
-            print(f"[SimRelay] Simulated {sc.get('name') or key} with the {eng} engine in {time.time() - t0:.1f} s (cached as {key}).")
+            print(f"[SimRELAY] Simulated {sc.get('name') or key} with the {eng} engine in {time.time() - t0:.1f} s (cached as {key}).")
             if save_log:
                 try:
                     rid = time.strftime("%Y%m%d-%H%M%S-") + key[:4]
@@ -235,7 +235,7 @@ def import_simulink_run(mat_path):
     _remember_wave(key, src)
     rid = run_meta(key, _preset_keys())["run_id"]
     SIMULINK_LAST.update(key=key, run_id=rid, t=time.time())
-    print(f"[SimRelay] Imported the Simulink Editor run of {sc.get('name') or 'custom scenario'} as {rid} ({key}).")
+    print(f"[SimRELAY] Imported the Simulink Editor run of {sc.get('name') or 'custom scenario'} as {rid} ({key}).")
     return key, rid
 
 
@@ -571,7 +571,7 @@ class Handler(SimpleHTTPRequestHandler):
                 sc = {k: v for k, v in body.items() if k != "engine"}
                 t0 = time.time()
                 slx = open_in_simulink(sc)
-                print(f"[SimRelay] Opened {sc.get('name') or 'custom scenario'} in Simulink in {time.time() - t0:.1f} s ({slx}).")
+                print(f"[SimRELAY] Opened {sc.get('name') or 'custom scenario'} in Simulink in {time.time() - t0:.1f} s ({slx}).")
                 return self._json({"ok": True, "slx": slx})
             if u.path == "/api/simulink/import":
                 key, rid = import_simulink_run(str(body["mat"]))
@@ -611,14 +611,14 @@ def main():
     a = ap.parse_args()
     if a.precompute:
         precompute_all()
-        print("[SimRelay] All presets are cached.")
+        print("[SimRELAY] All presets are cached.")
         return
     threading.Thread(target=precompute_all, daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     url = f"http://{a.host}:{a.port}"
     global SERVER_URL
     SERVER_URL = url                     # where a run started from the Simulink Editor reports back
-    print(f"[SimRelay] Ready at {url}  (Ctrl+C to stop)")
+    print(f"[SimRELAY] Ready at {url}  (Ctrl+C to stop)")
     if not a.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:

@@ -1,4 +1,4 @@
-# SimRelay 34: panduan untuk Claude
+# SimRELAY: panduan untuk Claude
 
 Test bench Software-in-the-Loop (SIL) untuk Tugas Akhir 18023047: membuktikan bahwa relai
 konvensional salah kerja (F-1 sampai F-5) akibat penetrasi DER pada IEEE 34 Node Test Feeder,
@@ -11,7 +11,7 @@ sudah ditemukan. Kalau pengguna berkata "migrasi kesini" atau "lanjutkan", mulai
 
 ## Ringkas
 
-- Aplikasi web lokal: `python server.py` lalu buka http://127.0.0.1:8034 (Windows: `Jalankan SimRelay.bat`).
+- Aplikasi web lokal: `python server.py` lalu buka http://127.0.0.1:8034 (Windows: `Jalankan SimRELAY.bat`).
 - Dua engine dengan antarmuka identik:
   - Python (`engine/sim.py`), cepat, dipakai untuk sweep 5.247 run.
   - MATLAB Simulink / Simscape Electrical (`engine/matlab_bridge.py` + `matlab/*.m`), mode fasor.

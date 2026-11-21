@@ -1,6 +1,6 @@
 function sr34_run(cfgfile, outfile, mdl)
-%SR34_RUN Build (or reuse) the Simscape model for a SimRelay scenario, simulate it, save results.
-%   sr34_run(cfgfile, outfile) reads the JSON configuration written by the SimRelay app, builds
+%SR34_RUN Build (or reuse) the Simscape model for a SimRELAY scenario, simulate it, save results.
+%   sr34_run(cfgfile, outfile) reads the JSON configuration written by the SimRELAY app, builds
 %   the phasor model, runs it and writes the measured node voltages, branch currents and the
 %   controller log to the MAT file OUTFILE (read back by engine/matlab_bridge.py).
 if nargin < 3, mdl = 'sr34_model'; end

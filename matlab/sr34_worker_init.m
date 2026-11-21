@@ -1,5 +1,5 @@
 function sr34_worker_init(here)
-%SR34_WORKER_INIT Prepare one MATLAB session (pool worker or main) for SimRelay simulations.
+%SR34_WORKER_INIT Prepare one MATLAB session (pool worker or main) for SimRELAY simulations.
 %   Every session gets its own working, cache and code-generation folder; Simulink sessions that
 %   share these folders corrupt each other's files when they run in parallel.
 addpath(here);

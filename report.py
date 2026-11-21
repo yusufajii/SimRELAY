@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-SimRelay 34: laporan PDF Post-Run (Proof of Urgency), bahasa Indonesia.
+SimRELAY: laporan PDF Post-Run (Proof of Urgency), bahasa Indonesia.
 
-    python report.py        menulis batch/Laporan_PostRun_SimRelay34.pdf
+    python report.py        menulis batch/Laporan_PostRun_SimRELAY.pdf
 
 Membaca batch/results.jsonl, batch/postrun_summary.json dan batch/figures/report/*.png
 (jalankan batch.py lalu postrun.py terlebih dahulu). Semua angka di dalam teks dihitung
@@ -31,7 +31,7 @@ from reportlab.platypus.tableofcontents import TableOfContents
 ROOT = os.path.dirname(os.path.abspath(__file__))
 BATCH = os.path.join(ROOT, "batch")
 FIGR = os.path.join(BATCH, "figures", "report")
-OUT = os.path.join(BATCH, "Laporan_PostRun_SimRelay34.pdf")
+OUT = os.path.join(BATCH, "Laporan_PostRun_SimRELAY.pdf")
 
 CODES = ["F-1", "F-2", "F-3", "F-4", "F-5"]
 ALL = CODES + ["NT"]
@@ -141,7 +141,7 @@ def table_block(title, head, rows, widths, note=None):
 class Doc(BaseDocTemplate):
     def __init__(self, path, **kw):
         super().__init__(path, pagesize=A4, leftMargin=22 * mm, rightMargin=22 * mm, topMargin=22 * mm, bottomMargin=20 * mm,
-                         title="Laporan Post-Run SimRelay 34: Proof of Urgency", author="SimRelay 34",
+                         title="Laporan Post-Run SimRELAY: Proof of Urgency", author="SimRELAY",
                          subject="Hasil simulasi batch relai konvensional pada IEEE 34 Bus dengan penetrasi DER", **kw)
         fr = Frame(self.leftMargin, self.bottomMargin, self.width, self.height, id="f")
         self.addPageTemplates([PageTemplate("cover", [fr], onPage=self._cover), PageTemplate("body", [fr], onPage=self._page)])
@@ -158,7 +158,7 @@ class Doc(BaseDocTemplate):
         c.saveState()
         c.setFont("Arial", 8.5)
         c.setFillColor(MUTED)
-        c.drawString(self.leftMargin, A4[1] - 13 * mm, "Laporan Post-Run SimRelay 34: Proof of Urgency")
+        c.drawString(self.leftMargin, A4[1] - 13 * mm, "Laporan Post-Run SimRELAY: Proof of Urgency")
         c.drawRightString(A4[0] - self.rightMargin, A4[1] - 13 * mm, "Tugas Akhir 18023047")
         c.setStrokeColor(LINE)
         c.setLineWidth(0.6)
@@ -239,7 +239,7 @@ def build():
               Paragraph("Pembuktian Urgensi Relai Adaptif: Kegagalan Relai Konvensional akibat Penetrasi DER pada IEEE 34 Node Test Feeder",
                         ParagraphStyle("t", fontName="Arial-Bold", fontSize=22, leading=29, textColor=INK)),
               Spacer(1, 10),
-              Paragraph("Post-Run Visualization dari pengujian Software-in-the-Loop (SIL) menggunakan test bench SimRelay 34",
+              Paragraph("Post-Run Visualization dari pengujian Software-in-the-Loop (SIL) menggunakan test bench SimRELAY",
                         ParagraphStyle("s", fontName="Arial", fontSize=12.5, leading=18, textColor=INK2)),
               Spacer(1, 26 * mm)]
     meta = [["Dokumen", "Laporan Post-Run (Proof of Urgency)"], ["Konteks", "Tugas Akhir 18023047"],
@@ -313,13 +313,13 @@ def build():
     story.append(H2("1.3 Ruang Lingkup"))
     story.append(P("Laporan ini mencakup tahap Post-Run Visualization: desain kampanye batch, eksekusi, dan lima visualisasi pembuktian, yaitu "
                    "Dynamic TCC Overlay, Failure Rate Heatmap, Stacked Bar Escalation, R-X Envelope dan Polar Rose, serta Protection Confusion Matrix. "
-                   "Visualisasi waktu nyata (SCADA dan osiloskop) tersedia di situs lokal SimRelay 34 dan tidak dibahas di sini."))
+                   "Visualisasi waktu nyata (SCADA dan osiloskop) tersedia di situs lokal SimRELAY dan tidak dibahas di sini."))
 
     # ============================================================ 2 metodologi
     story.append(PageBreak())
     story.append(H1("2. Metodologi"))
     story.append(H2("2.1 Test Bench Software-in-the-Loop"))
-    story.append(P("Simulasi dijalankan dengan engine fasor tiga fasa quasi-steady-state SimRelay 34. Solver nodal menghitung tegangan dan arus "
+    story.append(P("Simulasi dijalankan dengan engine fasor tiga fasa quasi-steady-state SimRELAY. Solver nodal menghitung tegangan dan arus "
                    "setiap langkah waktu dt = 1/960 s (16 langkah per siklus 60 Hz). Setiap Intelligent Electronic Device (IED) virtual membaca fasor "
                    "yang difilter DFT satu siklus, dan pemutus membutuhkan 50 ms untuk membuka setelah perintah trip. Jaringan uji terdiri atas "
                    "IEEE 34 Node Test Feeder (Penyulang A, konfigurasi saluran 300 sampai 304, regulator REG1 dan REG2, kapasitor C844 dan C848, "
@@ -621,7 +621,7 @@ def build():
     story.append(P("Seluruh hasil dapat direproduksi dengan perintah berikut dari folder proyek: <font face='Arial-Bold'>python batch.py</font> "
                    "(menjalankan kampanye dan dapat dilanjutkan bila terhenti), <font face='Arial-Bold'>python postrun.py</font> (membuat gambar), dan "
                    "<font face='Arial-Bold'>python report.py</font> (membuat laporan ini). Gambar dan tabel juga dapat dilihat secara interaktif pada "
-                   "halaman Post-Run Analysis di situs lokal SimRelay 34."))
+                   "halaman Post-Run Analysis di situs lokal SimRELAY."))
     story.append(H1("Lampiran C. Contoh Temuan Fault Hunter"))
     story.append(P("Tabel berikut memuat satu contoh temuan untuk setiap mode kegagalan, sebagaimana tercatat oleh Fault Hunter (teks temuan "
                    "dalam bahasa Inggris sesuai log simulasi)."))

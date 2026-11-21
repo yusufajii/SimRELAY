@@ -1,5 +1,5 @@
 """
-Bridge between the SimRelay app and the MATLAB/Simulink (Simscape Electrical) engine.
+Bridge between the SimRELAY app and the MATLAB/Simulink (Simscape Electrical) engine.
 
 The app keeps ownership of every input: network topology and parameters, relay logic and
 settings, DER configuration, irradiance, load level and simulation events. This module turns a

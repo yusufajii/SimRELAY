@@ -1,5 +1,5 @@
 function sr34_batch(listfile, nworkers)
-%SR34_BATCH Run a list of SimRelay scenarios (MATLAB sweep engine).
+%SR34_BATCH Run a list of SimRELAY scenarios (MATLAB sweep engine).
 %   sr34_batch(listfile, nworkers) reads a JSON list of {cfg, out} file pairs written by batch.py
 %   and runs sr34_run on each of them.
 %     nworkers <= 1 : serial, in this MATLAB session (lowest memory use).

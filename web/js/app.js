@@ -1,4 +1,4 @@
-// SimRelay 34: main application
+// SimRELAY: main application
 import { SLD, vStatus, LAYERS, QTY, FUNC } from "./sld.js";
 import { Scope } from "./scope.js";
 import { PhasorView } from "./phasor.js";
@@ -561,7 +561,7 @@ class App {
     const title = panel.querySelector(".ttl").textContent;
     const fonts = document.querySelector('link[href*="fonts.googleapis.com/css2"]');
     w.document.open();
-    w.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>SimRelay 34: ${title}</title><link rel="icon" href="${location.origin}/img/logo-stei.png">${fonts ? `<link rel="stylesheet" href="${fonts.href}">` : ""}<link rel="stylesheet" href="${location.origin}/css/app.css"></head><body class="detached"></body></html>`);
+    w.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>SimRELAY: ${title}</title><link rel="icon" href="${location.origin}/img/simrelay-icon.png">${fonts ? `<link rel="stylesheet" href="${fonts.href}">` : ""}<link rel="stylesheet" href="${location.origin}/css/app.css"></head><body class="detached"></body></html>`);
     w.document.close();
     w.document.body.appendChild(w.document.importNode(document.querySelector("svg[aria-hidden]"), true));
     w.document.body.appendChild(w.document.adoptNode(panel));

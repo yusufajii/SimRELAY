@@ -1,12 +1,12 @@
 function slx = sr34_open(cfgfile, slxdir, url, mdl)
-%SR34_OPEN Build (or reuse) the Simscape model for a SimRelay scenario and open it in Simulink.
-%   slx = sr34_open(cfgfile, slxdir, url) reads the JSON configuration written by the SimRelay
+%SR34_OPEN Build (or reuse) the Simscape model for a SimRELAY scenario and open it in Simulink.
+%   slx = sr34_open(cfgfile, slxdir, url) reads the JSON configuration written by the SimRELAY
 %   app, builds the phasor model exactly as sr34_run does, saves it as <slxdir>/<mdl>.slx and
 %   opens the Simulink Editor.
 %
 %   The model can be simulated from the editor (Run button): its InitFcn loads the scenario
 %   configuration (kept next to the .slx) and resets the controller, and its StopFcn sends the
-%   result to the SimRelay server at URL, which processes it like an engine run and shows it in
+%   result to the SimRELAY server at URL, which processes it like an engine run and shows it in
 %   the web app (see sr34_editor).
 if nargin < 4, mdl = 'sr34_model'; end
 global SR34 %#ok<GVMIS>
@@ -32,7 +32,7 @@ set_param(mdl, 'ReturnWorkspaceOutputs', 'off', ...
     'InitFcn', sprintf('addpath(''%s''); sr34_editor(''init'', ''%s'');', here, cfgcopy), ...
     'StopFcn', sprintf('sr34_editor(''stop'', ''%s'', ''%s'');', cfgcopy, url));
 if isfield(cfg, 'name') && ~isempty(cfg.name)
-    set_param(mdl, 'Description', sprintf('SimRelay 34 scenario: %s', char(string(cfg.name))));
+    set_param(mdl, 'Description', sprintf('SimRELAY scenario: %s', char(string(cfg.name))));
 end
 slx = fullfile(slxdir, [mdl '.slx']);
 save_system(mdl, slx, 'OverwriteIfChangedOnDisk', true);
