@@ -176,6 +176,20 @@ Sudah selesai:
    - Aturan gaya UI: tanpa badge, chip, atau kotak bersudut bulat dengan isi berwarna cerah.
      Status ditulis sebagai teks berwarna dengan penanda kotak kecil, dan pemisah memakai garis
      tipis.
+9. Panel bawah dan kanan:
+   - Output Waveform: mode Electromagnetic transient (rekonstruksi dari fasor, bukan EMT
+     sungguhan), RMS, atau Sequence. Maksimal 2 kanal di jendela utama, tanpa batas bila
+     di-detach. Tiap kanal punya tabel Inst, RMS, dan Peak per fasa pada kursor.
+   - Output Phasor mengikuti kanal waveform: diagram polar dan tabel RMS, Peak, Phase, Inst
+     (komponen fundamental), dengan sudut relatif terhadap fasa A kanal pertama dan N = A + B + C.
+     Datanya dari `/api/wave?mode=phasor` (dihitung di `server.py`, jadi fingerprint engine tidak
+     berubah).
+   - Simulator Events dan Fault Analysis dihapus dari UI.
+   - Tinggi baris bawah, lebar panel fasor, dan lebar panel alarm bisa diatur dengan splitter
+     (tersimpan di localStorage `sr34-layout`).
+   - Output Waveform, Output Phasor, dan Alarms and Events bisa di-detach ke jendela browser
+     terpisah (panel dipindah dengan `adoptNode`, tetap sinkron) dan dikembalikan lewat tombol
+     Attach atau dengan menutup jendelanya. Browser harus mengizinkan pop-up untuk halaman ini.
 
 9. Interkoneksi Simulink dari UI (21 November 2026):
    - Tombol **Simulink** di toolbar SLD (`/api/simulink/open` -> `matlab/sr34_open.m`) membangun model

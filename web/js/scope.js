@@ -1,12 +1,14 @@
-// Multi-channel oscilloscope (ground truth), canvas based
+// Output waveform: multi-channel plot, canvas based, with a value table per channel
 const PH = ["#e8590c", "#2f9e44", "#1c7ed6"];
 const PHL = ["A", "B", "C"];
 const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(v)) ? "N/A" : Number(v).toFixed(d);
+export const MODES = [["inst", "Electromagnetic transient"], ["rms", "RMS"], ["seq", "Sequence 1/2/0"]];
 
 export class Scope {
   constructor(host, app) {
     this.host = host; this.app = app; this.rows = []; this.cache = {}; this.byRun = {};
     this.win = 0.25;
+    this.maxRows = 2;          // when attached; a detached window has no limit
   }
 
   catalog(run) {
@@ -20,53 +22,70 @@ export class Scope {
     g.push({ label: "Simulator probe: branch current", items: run.branches.map(b => [`br:${b}:I`, b]) });
     return g;
   }
+  label(sig) {
+    for (const g of this.cat || []) for (const [v, l] of g.items) if (v === sig) return l;
+    return sig;
+  }
 
   setRun(run, defaults) {
     this.run = run;
-    this.byRun = this.byRun || {};                       // waveforms stay cached per run
     this.cache = this.byRun[run.id] = this.byRun[run.id] || {};
     this.cat = this.catalog(run);
     this.host.innerHTML = "";
     this.rows = [];
     this._ready = false;
-    for (const d of defaults) this.addRow(d[0], d[1] || "inst");
+    for (const d of defaults.slice(0, this.limit())) this.addRow(d[0], d[1] || "inst");
     this._ready = true;
+    this.changed();
   }
+  limit() { return this.app.isDetached && this.app.isDetached("p-wave") ? Infinity : this.maxRows; }
+  canAdd() { return this.rows.length < this.limit(); }
+  // Back in the main window only the first channels that fit are kept.
+  trim() { while (this.rows.length > this.limit()) this.removeRow(this.rows[this.rows.length - 1]); this.changed(); }
+  changed() { if (this.app.onScopeChange) this.app.onScopeChange(); }
 
   addRow(sig, mode = "inst") {
-    if (!this.run) return;
+    if (!this.run || !this.canAdd()) return null;
+    const doc = this.host.ownerDocument;
+    const mk = (tag, cls) => { const e = doc.createElement(tag); if (cls) e.className = cls; return e; };
     const row = { sig, mode, data: null };
-    const div = document.createElement("div"); div.className = "srow";
-    const h = document.createElement("div"); h.className = "srow-h";
-    const sel = document.createElement("select");
+    const div = mk("div", "srow");
+    const h = mk("div", "srow-h");
+    const no = mk("span", "srow-no");
+    const sel = mk("select");
     for (const grp of this.cat) {
-      const og = document.createElement("optgroup"); og.label = grp.label;
-      for (const [v, l] of grp.items) { const o = document.createElement("option"); o.value = v; o.textContent = l; og.appendChild(o); }
+      const og = mk("optgroup"); og.label = grp.label;
+      for (const [v, l] of grp.items) { const o = mk("option"); o.value = v; o.textContent = l; og.appendChild(o); }
       sel.appendChild(og);
     }
     sel.value = sig;
-    const ms = document.createElement("select");
-    for (const [v, l] of [["inst", "Instantaneous"], ["rms", "RMS"], ["seq", "Sequence 1/2/0"]]) { const o = document.createElement("option"); o.value = v; o.textContent = l; ms.appendChild(o); }
+    const ms = mk("select");
+    for (const [v, l] of MODES) { const o = mk("option"); o.value = v; o.textContent = l; ms.appendChild(o); }
     ms.value = mode;
-    const rd = document.createElement("span"); rd.className = "rd";
-    const rm = document.createElement("span"); rm.className = "rm"; rm.innerHTML = '<svg class="ic"><use href="#i-close"/></svg>'; rm.title = "Remove channel";
-    h.append(sel, ms, rd, rm);
-    const cv = document.createElement("canvas");
-    const tip = document.createElement("div"); tip.className = "stip";
-    div.append(h, cv, tip);
+    const rm = mk("span", "rm"); rm.innerHTML = '<svg class="ic"><use href="#i-close"/></svg>'; rm.title = "Remove channel";
+    h.append(no, sel, ms, rm);
+    const body = mk("div", "srow-b");
+    const cv = mk("canvas");
+    const tab = mk("table", "srow-t");
+    const tip = mk("div", "stip");
+    body.append(cv, tab);
+    div.append(h, body, tip);
     this.host.appendChild(div);
-    Object.assign(row, { div, sel, ms, rd, cv, tip });
-    sel.onchange = () => { row.sig = sel.value; this.load(row); };
-    ms.onchange = () => { row.mode = ms.value; this.load(row); };
-    rm.onclick = () => { div.remove(); this.rows = this.rows.filter(r => r !== row); };
+    Object.assign(row, { div, sel, ms, cv, tab, tip, no });
+    sel.onchange = () => { row.sig = sel.value; this.load(row); this.changed(); };
+    ms.onchange = () => { row.mode = ms.value; this.load(row); this.changed(); };
+    rm.onclick = () => { this.removeRow(row); this.changed(); };
     cv.addEventListener("mousemove", ev => { row.hover = ev.offsetX; this.draw(row); });
     cv.addEventListener("mouseleave", () => { row.hover = null; tip.style.display = "none"; this.draw(row); });
     cv.addEventListener("click", ev => { const t = this.xToT(row, ev.offsetX); this.app.seek(t); });
     this.rows.push(row);
+    this.number();
     this.load(row);
-    if (this.run && this._ready) div.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (this._ready) { div.scrollIntoView({ block: "nearest" }); this.changed(); }
     return row;
   }
+  removeRow(row) { row.div.remove(); this.rows = this.rows.filter(r => r !== row); this.number(); }
+  number() { this.rows.forEach((r, i) => { r.no.textContent = i + 1; }); if (this.app.updateAddBtn) this.app.updateAddBtn(); }
 
   async load(row) {
     const tl = row.sig.startsWith("tl:");
@@ -116,7 +135,7 @@ export class Scope {
     if (t1 > T) { t0 -= (t1 - T); t1 = T; t0 = Math.max(t0, 0); }
     return [t0, t1];
   }
-  xToT(row, x) { const [t0, t1] = this.range(); const W = row.cv.clientWidth - 70; return t0 + (x - 46) / W * (t1 - t0); }
+  xToT(row, x) { const [t0, t1] = this.range(); const W = row.cv.clientWidth - 56; return t0 + (x - 46) / W * (t1 - t0); }
 
   drawAll() { for (const r of this.rows) this.draw(r); }
 
@@ -124,23 +143,44 @@ export class Scope {
     if (d.mode === "inst") { const i = Math.round(t * d.fs); return d.ch.map(c => c[Math.min(Math.max(i, 0), c.length - 1)]); }
     const i = bisect(d.t, t); return d.ch.map(c => c[i]);
   }
+  // RMS and peak over the cycle that ends at t (EMT channels only).
+  cycleStats(d, t) {
+    const n = Math.max(1, Math.round(d.fs / (this.run.f0 || 60)));
+    const i1 = Math.min(Math.max(Math.round(t * d.fs), 0), d.ch[0].length - 1), i0 = Math.max(0, i1 - n + 1);
+    return d.ch.map(c => { let s = 0, pk = 0, m = 0; for (let i = i0; i <= i1; i++) { const v = c[i]; if (v === null) continue; s += v * v; pk = Math.max(pk, Math.abs(v)); m++; } return [m ? Math.sqrt(s / m) : null, m ? pk : null]; });
+  }
+
+  table(row, d, cols) {
+    const unit = d.unit ? ` (${d.unit})` : "";
+    let html;
+    if (d.mode === "inst") {
+      const v = this.valueAt(d, this.app.t), st = this.cycleStats(d, this.app.t);
+      html = `<thead><tr><th></th><th>Inst${unit}</th><th>RMS</th><th>Peak</th></tr></thead><tbody>` +
+        d.labels.map((lb, i) => `<tr><td><i style="background:${cols[i % cols.length]}"></i>${lb.split(" ")[0]}</td><td>${fmt(v[i], 1)}</td><td>${fmt(st[i][0], 1)}</td><td>${fmt(st[i][1], 1)}</td></tr>`).join("") + "</tbody>";
+    } else {
+      const v = this.valueAt(d, this.app.t);
+      html = `<thead><tr><th></th><th>${d.mode === "rms" ? "RMS" : d.mode === "seq" ? "Magnitude" : "Value"}${unit}</th></tr></thead><tbody>` +
+        d.labels.map((lb, i) => `<tr><td><i style="background:${cols[i % cols.length]}"></i>${lb.split(" ")[0]}</td><td>${fmt(v[i], d.mode === "series" ? 3 : 2)}</td></tr>`).join("") + "</tbody>";
+    }
+    if (html !== row._tab) { row._tab = html; row.tab.innerHTML = html; }
+  }
 
   draw(row) {
-    const cv = row.cv, dpr = window.devicePixelRatio || 1;
+    const cv = row.cv, win = cv.ownerDocument.defaultView, dpr = win.devicePixelRatio || 1;
     const W = cv.clientWidth, H = cv.clientHeight;
+    if (!W || !H) return;
     if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
     const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H);
-    const L = 46, R = 24, T = 8, B = 16;
+    const L = 46, R = 10, T = 8, B = 16;
     const pw = W - L - R, ph = H - T - B;
     const d = row.data;
-    g.font = "10px JetBrains Mono, Consolas, monospace";
+    g.font = "10px 'IBM Plex Mono', Consolas, monospace";
     if (!d) { g.fillStyle = "#94a3b8"; g.fillText("Loading waveform", L + 8, H / 2); return; }
     if (d.err) { g.fillStyle = "#b91c1c"; g.fillText(d.err, L + 8, H / 2); return; }
     const [t0, t1] = this.range();
     const X = t => L + (t - t0) / (t1 - t0) * pw;
     const Y = v => T + (d.ymax - v) / (d.ymax - d.ymin) * ph;
-    // grid
     g.strokeStyle = "#eef1f5"; g.lineWidth = 1;
     for (let i = 0; i <= 4; i++) { const y = T + ph * i / 4; g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke(); }
     const span = t1 - t0;
@@ -151,19 +191,16 @@ export class Scope {
       const x = X(t); g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke();
       g.fillText(t.toFixed(st < 0.01 ? 3 : 2), x, H - 4);
     }
-    // nol & skala
     if (d.ymin < 0 && d.ymax > 0) { g.strokeStyle = "#cbd5e1"; g.beginPath(); g.moveTo(L, Y(0)); g.lineTo(L + pw, Y(0)); g.stroke(); }
     g.textAlign = "right"; g.fillStyle = "#475569";
     g.fillText(fmt(d.ymax, d.ymax < 10 ? 2 : 0), L - 4, T + 8);
     g.fillText(fmt(d.ymin, Math.abs(d.ymin) < 10 ? 2 : 0), L - 4, T + ph);
     g.fillStyle = "#94a3b8"; g.fillText(d.unit || "", L - 4, T + ph / 2 + 3);
-    // penanda kejadian
     for (const m of this.app.markers) {
       if (m.t < t0 || m.t > t1) continue;
       g.strokeStyle = m.kind === "fault" ? "#dc2626" : m.kind === "trip" ? "#d97706" : m.kind === "der" ? "#7c3aed" : "#94a3b8";
       g.setLineDash([3, 3]); g.beginPath(); g.moveTo(X(m.t), T); g.lineTo(X(m.t), T + ph); g.stroke(); g.setLineDash([]);
     }
-    // jejak
     g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
     const cols = d.colors || PH;
     g.lineWidth = 1.6;
@@ -196,19 +233,9 @@ export class Scope {
       g.stroke();
     });
     g.restore();
-    // kursor playback
     const xc = X(this.app.t);
     if (xc >= L && xc <= L + pw) { g.strokeStyle = "#0f172a"; g.lineWidth = 1.2; g.beginPath(); g.moveTo(xc, T); g.lineTo(xc, T + ph); g.stroke(); }
-    // label langsung (kanan)
-    const vals = this.valueAt(d, this.app.t);
-    g.textAlign = "left";
-    d.labels.forEach((lb, i) => {
-      const y = T + 10 + i * 13;
-      g.fillStyle = cols[i % cols.length]; g.fillRect(L + pw + 4, y - 7, 8, 8);
-      g.fillStyle = "#334155"; g.fillText(lb.split(" ")[0], L + pw + 14, y);
-    });
-    row.rd.textContent = d.labels.map((lb, i) => `${lb.split(" ")[0]}:${fmt(vals[i], d.mode === "inst" ? 1 : 2)}`).join("  ") + (d.unit ? " " + d.unit : "");
-    // hover crosshair
+    this.table(row, d, cols);
     if (row.hover !== null && row.hover !== undefined && row.hover >= L && row.hover <= L + pw) {
       const th = t0 + (row.hover - L) / pw * (t1 - t0);
       g.strokeStyle = "#94a3b8"; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(row.hover, T); g.lineTo(row.hover, T + ph); g.stroke(); g.setLineDash([]);
@@ -226,3 +253,4 @@ function bisect(a, x) {
   while (lo < hi) { const m = (lo + hi + 1) >> 1; if (a[m] <= x) lo = m; else hi = m - 1; }
   return lo;
 }
+export { bisect };

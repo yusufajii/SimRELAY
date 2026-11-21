@@ -265,6 +265,46 @@ def preset_ready(pid):
     return os.path.exists(os.path.join(RUN_CACHE, scenario_key(preset_scenario(pid)), "result.json"))
 
 
+# ------------------------------------------------------------------ phasors
+def phasor_series(src, sig):
+    """RMS phasors (fundamental) of a three-phase signal at 5 ms steps, with the angle of the
+    rotating reference so the client can also reconstruct the instantaneous fundamental value."""
+    import numpy as np
+    kind, ident, q = sig.split(":")
+    if kind == "bus":
+        i = src.bus_index[ident]
+        P = np.zeros((len(src.t), 3), complex)
+        for k in range(3):
+            j = src.bus_sel[i, k]
+            if j >= 0:
+                P[:, k] = src.V[:, j]
+        unit, scale = "kV", 1e-3
+    elif kind == "br":
+        bi = src.br_index[ident]
+        P, unit, scale = src.Ib[:, bi * 3: bi * 3 + 3].astype(complex), "A", 1.0
+    elif kind == "ied":
+        j = src.ied_ids.index(ident)
+        if q == "V":
+            P, unit, scale = src.relay_Vmeas[:, j].astype(complex), "kV", 1e-3
+        else:
+            br = src.ied_br[j]
+            P, unit, scale = src.Ib[:, br * 3: br * 3 + 3].astype(complex), "A", 1.0
+    elif kind == "der":
+        P, unit, scale = src.Ider[:, src.der_ids.index(ident)].astype(complex), "A", 1.0
+    elif kind == "fault":
+        P, unit, scale = src.Ifault[:, int(ident[1:]) - 1].astype(complex), "A", 1.0
+    else:
+        raise ValueError(sig)
+    step = max(int(round(0.01 / src.dt / 2)), 1)
+    ks = np.arange(0, len(src.t), step)
+    theta = 2 * np.pi * np.cumsum(src.freq_t.astype(float)) * src.dt
+    Q = P[ks] * scale
+    return {"unit": unit, "mode": "phasor", "t": np.round(src.t[ks], 5).tolist(),
+            "re": [np.round(Q[:, k].real, 4).tolist() for k in range(3)],
+            "im": [np.round(Q[:, k].imag, 4).tolist() for k in range(3)],
+            "th": np.round(np.mod(theta[ks], 2 * np.pi), 5).tolist()}
+
+
 # ------------------------------------------------------------------ run catalogue
 LABELS_P = os.path.join(ROOT, "runs", "labels.json")          # first format (labels only), migrated once
 NOTES_P = os.path.join(ROOT, "runs", "annotations.json")     # {key: {"labels": [...], "notes": "..."}}
@@ -473,7 +513,7 @@ class Handler(SimpleHTTPRequestHandler):
                 src = get_wave(rid)
                 if src is None:
                     return self._json({"error": "Run data not found in cache. Please run the scenario again."}, 404)
-                return self._json(waveform(src, sig, mode))
+                return self._json(phasor_series(src, sig) if mode == "phasor" else waveform(src, sig, mode))
             if u.path == "/api/simulink/last":
                 return self._json(SIMULINK_LAST)
             if u.path == "/api/catalog":
