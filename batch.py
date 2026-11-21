@@ -7,6 +7,11 @@ SimRELAY: batch simulation campaign (parsim equivalent) for the Post-Run analysi
     python batch.py --workers 8     number of parallel workers (default: CPU count - 1)
     python batch.py --engine matlab MATLAB Simulink engine, MATLAB parfor on a worker pool;
                                     results go to batch_matlab/ unless --outdir is given
+    python batch.py --campaign      Proof of Urgencies campaign (PoU) on the MATLAB engine: every
+                                    case is stored in full (result, waveforms, raw Simulink output)
+                                    under campaigns/PoU-TA-Proteksi-Adaptif/, with one Simulink
+                                    model per network topology (see campaign.py). With --pilot the
+                                    folder is campaigns/PoU-pilot/.
 
 Each case is simulated with the frozen baseline relay settings and analysed by the
 Fault Hunter. One compact record per case is appended to batch/results.jsonl, and the
@@ -151,8 +156,10 @@ def run_case(p):
     return record(p, sc, sim, analyze(sim), t0)
 
 
-def post_matlab_case(p, cfgfile, matfile):
-    """Turn one MATLAB result file into a case record (runs in a Python worker process)."""
+def post_matlab_case(p, cfgfile, matfile, run_dir=None, slx=None):
+    """Turn one MATLAB result file into a case record (runs in a Python worker process).
+
+    Campaign runs (RUN_DIR given) are also stored in full in RUN_DIR (see campaign.save_run)."""
     import scipy.io
     from engine.sim import Simulator
     from engine.hunter import analyze
@@ -163,10 +170,16 @@ def post_matlab_case(p, cfgfile, matfile):
         cfg = json.load(f)
     mat = scipy.io.loadmat(matfile, squeeze_me=True, struct_as_record=False)
     sim = load_matlab(Simulator, sc, _S, cfg, mat)
-    r = record(p, sc, sim, analyze(sim), t0)
+    hunt = analyze(sim)
+    r = record(p, sc, sim, hunt, t0)
     r["engine"] = "matlab"
     r["replay_mismatch"] = int(sim.replay_mismatch)
     r["matlab_wall"] = round(float(np.asarray(mat.get("wall", 0.0))), 2)
+    r["matlab_build"] = round(float(np.asarray(mat.get("tb", 0.0))), 2)
+    if run_dir:
+        import campaign
+        campaign.save_run(run_dir, sc, cfg, sim, hunt, r, matfile, p["topology"], slx)
+        r["wall"] = round(time.time() - t0, 2)
     for fn in (cfgfile, matfile):
         try:
             os.remove(fn)
@@ -319,8 +332,11 @@ def structure_of(c):
     return (c["fleet"], c["bus"], c["ftype"])
 
 
-def run_matlab(todo, done, workers, f, t0):
-    """Simulate with the MATLAB Simulink engine (parfor), post-process in Python worker processes."""
+def run_matlab(todo, done, workers, f, t0, topo=None):
+    """Simulate with the MATLAB Simulink engine (parfor), post-process in Python worker processes.
+
+    TOPO (campaign.Topologies) turns on campaign storage: each new topology is saved once as
+    models/T###.slx by MATLAB and every case is stored in full under runs/<run_id>/."""
     import matlab.engine
     from engine.matlab_bridge import export_config, MATLAB_DIR
     io_dir = os.path.join(OUT, "io")
@@ -356,10 +372,15 @@ def run_matlab(todo, done, workers, f, t0):
         for c in part:
             sc = scenario(c["fleet"], c["pen"], c["load"], c["rf"], c["bus"], c["ftype"], c["cls"])
             cfg, _ = export_config(sc, _S)
-            cf, of = os.path.join(io_dir, c["key"] + ".json"), os.path.join(io_dir, c["key"] + ".mat")
+            if topo is not None:
+                c["topology"] = topo.get(cfg["structure_key"], c)
+                cfg["slx_file"] = topo.slx(c["topology"])
+            cf, of =os.path.join(io_dir, c["key"] + ".json"), os.path.join(io_dir, c["key"] + ".mat")
             with open(cf, "w") as g:
                 json.dump(cfg, g)
             items.append({"cfg": cf, "out": of})
+        if topo is not None:
+            topo.save()
         lst = os.path.join(io_dir, f"list_{i0}.json")
         with open(lst, "w") as g:
             json.dump(items, g)
@@ -370,7 +391,8 @@ def run_matlab(todo, done, workers, f, t0):
         pending = {}
         for c, it in zip(part, items):
             if os.path.exists(it["out"]):
-                pending[post.submit(post_matlab_case, c, it["cfg"], it["out"])] = c
+                extra = () if topo is None else (os.path.join(OUT, "runs", c["run_id"]), topo.slx(c["topology"]))
+                pending[post.submit(post_matlab_case, c, it["cfg"], it["out"], *extra)] = c
             else:
                 err = it["out"] + ".err"
                 why = open(err).read()[:300] if os.path.exists(err) else "no output"
@@ -383,6 +405,49 @@ def run_matlab(todo, done, workers, f, t0):
     eng.quit()
 
 
+def settings_summary(S):
+    """Frozen baseline relay settings (the same for every case of the campaign)."""
+    keys = ("curve", "51P_pu", "51P_tms", "51N_pu", "51N_tms", "50P_pu", "50N_pu", "mta", "zreach", "ztime",
+            "87_pu", "87_slope", "87_delay")
+    out = {}
+    for iid, s in S.items():
+        if isinstance(s, dict):
+            out[iid] = _clean({k: np.asarray(s[k]).tolist() if isinstance(s[k], np.ndarray) else s[k]
+                               for k in keys if k in s})
+    return out
+
+
+def write_campaign_json(a, cases, done, **extra):
+    """campaign.json: definition, engine fingerprint and frozen settings, updated on every start and finish."""
+    import campaign
+    p = os.path.join(OUT, "campaign.json")
+    cur = campaign.read_json(p) if os.path.exists(p) else {}
+    with open(os.path.join(ROOT, "cache", "settings.pkl"), "rb") as f:
+        set_hash = hashlib.sha1(f.read()).hexdigest()[:16]
+    mfp = campaign.matlab_fingerprint()
+    if cur.get("matlab_fp") and cur["matlab_fp"] != mfp:
+        print(f"[batch] WARNING: the MATLAB engine changed since this campaign started "
+              f"({cur['matlab_fp']} to {mfp}); earlier cases were simulated with the old model.", flush=True)
+    started = extra.pop("started", None)
+    if started:
+        if "started" in cur:
+            cur.setdefault("resumed", []).append(started)
+        else:
+            cur["started"] = started
+    cur.update({
+        "name": os.path.basename(OUT), "title": campaign.TITLE + (" (pilot)" if a.pilot else ""),
+        "engine": "MATLAB Simulink (Simscape Electrical, phasor)", "matlab_fp": mfp,
+        "engine_fp": campaign.engine_fingerprint(), "settings_sha1": set_hash, "workers": a.workers,
+        "n_cases": len(cases), "n_done": sum(1 for c in cases if c["key"] in done),
+        "definition": {"pens": PENS, "loads": LOADS, "rfs": RFS, "faults": FAULTS, "sites": SITES,
+                       "techs": TECHS, "isl_sites": ISL_SITES, "t_on": T_ON, "duration": DURATION,
+                       "peak_load_kw": PEAK_LOAD_KW, "pilot": bool(a.pilot)},
+        "relay_settings": settings_summary(_S),
+    })
+    cur.update(extra)
+    campaign.write_json(p, cur, indent=1)
+
+
 def main():
     global OUT, JSONL
     ap = argparse.ArgumentParser()
@@ -390,28 +455,51 @@ def main():
     ap.add_argument("--workers", type=int, default=max((os.cpu_count() or 2) - 1, 1))
     ap.add_argument("--engine", choices=["python", "matlab"], default="python")
     ap.add_argument("--outdir", default=None, help="output folder (default: batch, or batch_matlab for --engine matlab)")
+    ap.add_argument("--limit", type=int, default=0, help="run at most this many of the remaining cases (test runs)")
+    ap.add_argument("--campaign", action="store_true",
+                    help="Proof of Urgencies campaign: MATLAB engine, every case stored in full (see campaign.py)")
     a = ap.parse_args()
-    OUT = os.path.join(ROOT, a.outdir or ("batch_matlab" if a.engine == "matlab" else "batch"))
+    if a.campaign:
+        import campaign
+        a.engine = "matlab"
+        OUT = os.path.join(ROOT, a.outdir) if a.outdir else os.path.join(
+            campaign.CAMPAIGNS, campaign.PILOT_NAME if a.pilot else campaign.NAME)
+    else:
+        OUT = os.path.join(ROOT, a.outdir or ("batch_matlab" if a.engine == "matlab" else "batch"))
     JSONL = os.path.join(OUT, "results.jsonl")
     os.makedirs(OUT, exist_ok=True)
     if not os.path.exists(os.path.join(ROOT, "cache", "settings.pkl")):
         sys.exit("cache/settings.pkl not found. Start server.py once to compute the baseline settings.")
     cases = build_cases(a.pilot)
+    if a.campaign:
+        ids = {c["key"]: campaign.run_label(i + 1) for i, c in enumerate(build_cases(False))}
+        for c in cases:
+            c["run_id"] = ids[c["key"]]
     done = load_results()
     todo = [c for c in cases if c["key"] not in done]
+    n_left = len(todo)
+    if a.limit > 0:
+        todo = todo[:a.limit]
     if a.engine == "matlab" and not any(x.startswith("--workers") for x in sys.argv):
         # one Simulink + Simscape session needs about 1.5 to 2 GB of RAM; two workers is the safe
         # default on an 8 GB machine (use --workers 1 for a serial run in a single MATLAB session)
         a.workers = 2
-    print(f"[batch] {len(cases)} cases, {len(cases) - len(todo)} already done, {len(todo)} to run on {a.workers} "
+    print(f"[batch] {len(cases)} cases, {len(cases) - n_left} already done, {len(todo)} to run on {a.workers} "
           f"workers with the {a.engine} engine", flush=True)
     t0 = time.time()
     n = 0
     if a.engine == "matlab":
         _init()
+        topo = None
+        if a.campaign:
+            topo = campaign.Topologies(OUT)
+            write_campaign_json(a, cases, done, started=time.strftime("%Y-%m-%d %H:%M:%S"))
         with open(JSONL, "a") as f:
-            run_matlab(todo, done, a.workers, f, t0)
+            run_matlab(todo, done, a.workers, f, t0, topo)
         export({k: v for k, v in done.items() if k in {c['key'] for c in cases} or not a.pilot})
+        if a.campaign:
+            write_campaign_json(a, cases, done, finished=time.strftime("%Y-%m-%d %H:%M:%S"),
+                                minutes=round((time.time() - t0) / 60, 1))
         print(f"[batch] finished in {(time.time()-t0)/60:.1f} min. Results in {OUT}", flush=True)
         return
     with ProcessPoolExecutor(max_workers=a.workers, initializer=_init) as ex, open(JSONL, "a") as f:

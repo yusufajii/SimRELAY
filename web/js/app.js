@@ -1,8 +1,8 @@
 // SimRELAY: main application
 import { SLD, vStatus, LAYERS, QTY, FUNC } from "./sld.js";
-import { Scope } from "./scope.js";
+import { Scope, bisect } from "./scope.js";
 import { PhasorView } from "./phasor.js";
-import { AlarmTiles, RelayChart, ANN_KEY } from "./protect.js";
+import { AlarmTiles, RelayChart, ANN_KEY, tOp as curveTime } from "./protect.js";
 import { EV, kindOf } from "./icons.js";
 import { Editor } from "./editor.js";
 
@@ -13,6 +13,8 @@ const fmt = (v, d = 0) => (v === null || v === undefined || Number.isNaN(v)) ? "
 const icon = id => `<svg class="ic"><use href="#i-${id}"/></svg>`;
 const clone = o => JSON.parse(JSON.stringify(o));
 const CLS_SHORT = { OCR: "OCR", DOCR: "67", DIST: "21", DIFF: "87L" };
+const CAT_PAGE = 300;                 // stored runs listed at once (a campaign holds thousands)
+const CAMP_PART = { H1: "penetration and load", H2: "penetration and fault resistance", E: "relay classes", I: "islanded microgrid" };
 const CODE_DESC = {
   "F-1": "Blinding", "F-2": "Sympathetic trip", "F-3": "Miscoordination (CTI)", "F-4": "Wrong direction", "F-5": "Impedance under-reach", "NT": "Nuisance trip",
 };
@@ -104,7 +106,8 @@ class App {
   async openCatalog() {
     $("#catalog").classList.remove("hidden");
     this._catOpen = true;
-    if (!this._catFilters) this._catFilters = { q: "", source: "", engine: "", outcome: "", der: "", ftype: "", relay: "", label: "" };
+    if (!this._catFilters) this._catFilters = { q: "", source: "", engine: "", outcome: "", der: "", ftype: "", relay: "", label: "", part: "", pen: "", load: "", rf: "", bus: "" };
+    this._catShow = CAT_PAGE;
     this.renderCatalog();
     await this.loadCatalog();
     this.renderCatalog();
@@ -123,8 +126,11 @@ class App {
   renderCatalog() {
     const F = this._catFilters, runs = this.catalog || [];
     const uniq = a => [...new Set(a)].filter(x => x !== undefined && x !== null && x !== "").sort();
+    const camp = runs.filter(m => m.source === "campaign");
+    const num = a => [...new Set(a)].filter(x => x !== undefined && x !== null).sort((x, y) => x - y);
     const opts = {
-      source: [["", "All sources"], ["preset", "Preset"], ["custom", "Custom"], ["simulink", "Simulink Editor"]],
+      source: [["", "All sources"], ["preset", "Preset"], ["custom", "Custom"], ["simulink", "Simulink Editor"],
+               ...uniq(camp.map(m => m.campaign_title)).map(t => ["campaign:" + t, "Campaign: " + t])],
       engine: [["", "All engines"], ["python", "Python"], ["matlab", "MATLAB Simulink"]],
       outcome: [["", "All outcomes"], ["OK", "Correct operation"], ...["F-1", "F-2", "F-3", "F-4", "F-5", "NT"].map(c => [c, `${c} ${CODE_DESC[c]}`])],
       der: [["", "All DER types"], ["none", "No DER"], ...uniq(runs.flatMap(m => m.der.map(d => d.type))).map(t => [t, t])],
@@ -132,18 +138,30 @@ class App {
       relay: [["", "All relay classes"], ...uniq(runs.map(m => m.relay)).map(c => [c, c])],
       label: [["", "All labels"], ...uniq(runs.flatMap(m => m.labels || [])).map(l => [l, l])],
     };
+    if (camp.length) {                    // campaign runs: filters for the sweep dimensions
+      opts.part = [["", "All campaign parts"], ...uniq(camp.map(m => m.part)).map(p => [p, `Part ${p}: ${CAMP_PART[p] || p}`])];
+      opts.pen = [["", "All penetrations"], ...num(camp.map(m => m.pen)).map(p => [String(p), `${p} % DER penetration`])];
+      opts.load = [["", "All load levels"], ...uniq(camp.map(m => m.load)).map(l => [l, `${l} load`])];
+      opts.rf = [["", "All fault resistances"], ...num(camp.map(m => m.rf)).map(r => [String(r), `Rf ${r} Ω`])];
+      opts.bus = [["", "All fault buses"], ...uniq(camp.flatMap(m => m.faults.map(f => f.at))).map(b => [b, `Fault at ${b}`])];
+    }
     const host = $("#cat-filters");
     if (host.dataset.sig !== JSON.stringify(opts)) {
       host.innerHTML = Object.entries(opts).map(([k, o]) => `<select data-f="${k}" title="Filter">${o.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select>`).join("")
         + `<button class="lnk" id="cat-reset">Clear filters</button>`;
       host.dataset.sig = JSON.stringify(opts);
-      host.querySelectorAll("select").forEach(s => { s.value = F[s.dataset.f] || ""; s.onchange = () => { F[s.dataset.f] = s.value; this.renderCatalog(); }; });
+      host.querySelectorAll("select").forEach(s => { s.value = F[s.dataset.f] || ""; s.onchange = () => { F[s.dataset.f] = s.value; this._catShow = CAT_PAGE; this.renderCatalog(); }; });
       $("#cat-reset").onclick = () => { for (const k of Object.keys(F)) F[k] = ""; $("#cat-q").value = ""; host.dataset.sig = ""; this.renderCatalog(); };
     }
     host.querySelectorAll("select").forEach(s => s.classList.toggle("set", !!F[s.dataset.f]));
     const q = F.q.trim().toLowerCase();
     const list = runs.filter(m => {
-      if (F.source && m.source !== F.source) return false;
+      if (F.source && (F.source.startsWith("campaign:") ? m.campaign_title !== F.source.slice(9) : m.source !== F.source)) return false;
+      if (F.part && m.part !== F.part) return false;
+      if (F.pen && String(m.pen) !== F.pen) return false;
+      if (F.load && m.load !== F.load) return false;
+      if (F.rf && String(m.rf) !== F.rf) return false;
+      if (F.bus && !m.faults.some(f => f.at === F.bus)) return false;
       if (F.engine && m.engine !== F.engine) return false;
       if (F.outcome && !this.outcomeOf(m).includes(F.outcome)) return false;
       if (F.der && (F.der === "none" ? m.der.length : !m.der.some(d => d.type === F.der))) return false;
@@ -151,7 +169,8 @@ class App {
       if (F.relay && m.relay !== F.relay) return false;
       if (F.label && !(m.labels || []).includes(F.label)) return false;
       if (q) {
-        const hay = [m.run_id, String(m.run_no), m.notes, ...(m.labels || []), this.derText(m), m.load, this.faultText(m), m.relay, ...this.outcomeOf(m)].join(" ").toLowerCase();
+        const hay = [m.run_id, String(m.run_no), m.notes, ...(m.labels || []), this.derText(m), m.load, this.faultText(m), m.relay, ...this.outcomeOf(m),
+                     m.part || "", m.topology || ""].join(" ").toLowerCase();
         if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
       }
       return true;
@@ -159,7 +178,11 @@ class App {
     const cur = this.run ? this.run.id : null;
     const out = m => this.outcomeOf(m).map(c => c === "OK" ? `<span class="st ok">Correct operation</span>` : `<span class="st bad">${c}${m.counts[c] > 1 ? " (" + m.counts[c] + ")" : ""}</span>`).join(" ");
     const edit = (key, f, html, empty) => `<td class="ed" data-key="${key}" data-f="${f}"><span class="ed-v">${html || `<span class="none">${empty}</span>`}</span><button class="lnk ed-e" title="Edit">Edit</button></td>`;
-    $("#cat-table tbody").innerHTML = list.map(m => `<tr data-key="${m.key}" class="${m.key === cur ? "cur" : ""}">
+    const eng = m => m.source === "simulink" ? "MATLAB<div class=\"meta\">Simulink Editor</div>"
+      : m.source === "campaign" ? `MATLAB<div class="meta">Campaign part ${esc(m.part)}${m.topology ? ", topology " + esc(m.topology) : ""}</div>`
+      : m.engine === "matlab" ? "MATLAB" : "Python";
+    const shown = list.slice(0, this._catShow || CAT_PAGE);
+    $("#cat-table tbody").innerHTML = shown.map(m => `<tr data-key="${m.key}" class="${m.key === cur ? "cur" : ""}">
         <td class="rid">${esc(m.run_id)}</td>
         ${edit(m.key, "labels", (m.labels || []).map(esc).join(", "), "No label")}
         ${edit(m.key, "notes", esc(m.notes || ""), "No notes")}
@@ -167,12 +190,18 @@ class App {
         <td>${esc(this.faultText(m))}</td>
         <td>${esc(m.relay)}${Object.keys(m.relay_overrides || {}).length ? " (mixed)" : ""}</td>
         <td>${out(m)}</td>
-        <td>${m.source === "simulink" ? "MATLAB<div class=\"meta\">Simulink Editor</div>" : m.engine === "matlab" ? "MATLAB" : "Python"}</td>
-        <td class="dt">${esc(m.created)}</td></tr>`).join("")
+        <td>${eng(m)}</td>
+        <td class="dt">${esc(m.created)}<div><button class="lnk go-dir" title="Open the folder of this run in Windows Explorer">Go to Folder</button></div></td></tr>`).join("")
       || `<tr><td colspan="9" class="empty">${runs.length ? "No stored run matches the search and filters." : "Loading stored runs"}</td></tr>`;
-    $("#cat-count").textContent = runs.length ? `${list.length} of ${runs.length} runs` : "";
+    $("#cat-count").textContent = runs.length
+      ? `${list.length} of ${runs.length} runs` + (shown.length < list.length ? `, the first ${shown.length} are listed` : "") : "";
+    const more = $("#cat-more");
+    more.classList.toggle("hidden", shown.length >= list.length);
+    more.textContent = `Show ${Math.min(CAT_PAGE, list.length - shown.length)} more`;
+    more.onclick = () => { this._catShow = (this._catShow || CAT_PAGE) + CAT_PAGE; this.renderCatalog(); };
     $("#cat-table tbody").querySelectorAll("tr[data-key]").forEach(tr => tr.onclick = ev => {
       if (ev.target.closest(".ed")) return;
+      if (ev.target.closest(".go-dir")) { ev.stopPropagation(); this.revealRun(tr.dataset.key); return; }
       this.openRun(tr.dataset.key);
     });
     $("#cat-table tbody").querySelectorAll(".ed-e").forEach(b => b.onclick = ev => { ev.stopPropagation(); this.editField(b.closest(".ed")); });
@@ -198,6 +227,14 @@ class App {
       this.renderCatalog(); this.renderRunSel();
     };
     inp.onblur = () => setTimeout(() => { if (td.isConnected && td.querySelector(".ed-in")) this.renderCatalog(); }, 150);
+  }
+  // Open the folder where a stored run is kept (Windows Explorer on the computer running the server).
+  async revealRun(key) {
+    try {
+      const j = await (await fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) })).json();
+      if (j.error) throw new Error(j.error);
+      this.toastInfo("The run folder is open in Windows Explorer: " + j.folder, 5000);
+    } catch (e) { this.toast("The folder could not be opened: " + e.message); }
   }
   async openRun(key) {
     const m = this.catalog.find(x => x.key === key);
@@ -226,6 +263,8 @@ class App {
     this.scenario = clone(j.scenario); delete this.scenario._node;
     this.edited = true;
     this.engine = j.engine || "python"; $("#engine").value = this.engine;
+    // A campaign run opens its own stored Simulink topology as long as the scenario is not changed.
+    this._campRun = j.origin === "campaign" ? { key, sc: JSON.stringify(this.scenario) } : null;
     this.runCache.set(this.cacheKey(), j);
     this.setRun(j);
   }
@@ -271,12 +310,17 @@ class App {
   async openSimulink() {
     if (!this.scenario || this._slBusy) return;
     this._slBusy = true;
-    this.busy(true, "Opening the Simulink model. The first time starts MATLAB and builds the model, about 1 minute.");
+    this.busy(true, "Opening the Simulink model. A stored topology opens directly; a new topology is built once, about 1 minute. Starting MATLAB adds about 30 s.");
     try {
-      const r = await fetch("/api/simulink/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this.scenario) });
+      const body = Object.assign({}, this.scenario);
+      const cr = this._campRun;
+      if (cr && this.run && this.run.id === cr.key && JSON.stringify(this.scenario) === cr.sc) body._run_key = cr.key;
+      const r = await fetch("/api/simulink/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
-      this.toastInfo("The Simulink model is open in MATLAB. Press Run in the Simulink Editor; the result will appear here automatically.", 8000);
+      this.toastInfo((j.built ? "The Simulink model was built and stored for this topology, and is open in MATLAB."
+                              : "The stored Simulink model of this topology is open in MATLAB.")
+                     + " Press Run in the Simulink Editor; the result will appear here automatically.", 8000);
       this.watchSimulink();
     } catch (e) {
       this.toast("The Simulink model could not be opened: " + e.message);
@@ -344,7 +388,8 @@ class App {
   }
 
   // playback
-  frameAt(t) { const r = this.run; return Math.min(Math.max(Math.round(t / 0.01), 0), r.t.length - 1); }
+  // last stored frame at or before t; frame spacing differs per engine (Python 10 ms, MATLAB 10.4 ms)
+  frameAt(t) { return bisect(this.run.t, t + 1e-6); }
   seek(t) {
     if (!this.run) return;
     this.t = Math.min(Math.max(t, 0), this.run.T);
@@ -457,17 +502,66 @@ class App {
     const all = $("#soe-all").checked, flt = $("#soe-filter").value;
     const key = `${r.id}|${all}|${flt}|${Math.round(t * 1000)}`;
     if (key === this._soeKey) return; this._soeKey = key;
-    const rows = r.events_relay.filter(e => (!flt || e.id === flt) && e.type !== "DROPOUT" && (all || e.t <= t + 1e-9));
+    const rows = r.events_relay.filter(e => (!flt || e.id === flt) && (all || e.t <= t + 1e-9));
     const tb = $("#soe-relay tbody");
-    tb.innerHTML = rows.map(e => `<tr class="k-${e.kind}${e.t > t ? " future" : ""}"><td>${clock(e.t)}</td><td><span class="iedtag">${e.id}</span></td><td><span class="evc" title="${EV[kindOf(e, "relay")].label}">${EV[kindOf(e, "relay")].svg}</span>${esc(e.text.replace(e.id + " ", ""))}</td></tr>`).join("")
+    tb.innerHTML = rows.map(e => `<tr class="k-${e.kind}${e.t > t ? " future" : ""}"><td>${clock(e.t)}</td><td><span class="iedtag">${e.id}</span></td><td><span class="evc" title="${EV[kindOf(e, "relay")].label}">${EV[kindOf(e, "relay")].svg}</span>${esc(this.relayText(e))}</td></tr>`).join("")
       || `<tr><td colspan="3" class="empty">No IED records up to t = ${t.toFixed(3)} s</td></tr>`;
+  }
+
+  // SOE wording: a timed element reports its time delay (Timer Set) and the timer reset at dropout;
+  // instantaneous trips are marked as such.
+  // Timer Set is the curve time at the relay's own measured current one power cycle after pickup.
+  // The relay measures through a one-cycle filter, so at the pickup instant the phasor is still
+  // rising and a delay taken there would be far too long. One cycle later the filter window holds
+  // only fault data and the value is the settled fault current. The same rule applies to an EMT
+  // run as long as the relay phasors come from its own one-cycle filter. If the element resets or
+  // the relay trips within that cycle, the current never settles and the delay is shown as N/A.
+  // The actual operating time still comes from the relay's integrating timer (see the TRIP record).
+  relayText(e) {
+    let s = e.text.replace(e.id + " ", "").replace(/\s*\(M=[^)]*\)/g, "");
+    const r = this.run, evs = this.iedTL[e.id] || [];
+    const pickedAt = key => { let p = null; for (const x of evs) { if (x.t > e.t + 1e-9) break; if (x.type === "PICKUP" && x.text.split(" ")[1] === key) p = x.t; } return p; };
+    const timed = key => /^(51|67)/.test(key) || /^21-Z[23]/.test(key);
+    if (e.type === "PICKUP") {
+      const key = s.split(" ")[0];
+      if (!timed(key)) return s;
+      const st = (this.init.settings || {})[e.id];
+      const z = key.match(/^21-Z([23])/);
+      if (z) return st && st.ztime ? `${s}, Timer Set = ${Number(st.ztime[Number(z[1]) - 1]).toFixed(3)} s` : s;
+      const head = s.replace(/\s.*$/, "") + " PICKUP";
+      const na = `${head}, Timer Set = N/A`;
+      const d = r.ied[this.iedIdx[e.id]];
+      if (!st || !d) return na;
+      // validity ends at this element's dropout or the relay's trip, whichever comes first
+      let tEnd = r.T;
+      for (const x of evs) if (x.t > e.t + 1e-9 && ((x.type === "DROPOUT" && x.text.split(" ")[1] === key) || x.type === "TRIP")) { tEnd = x.t; break; }
+      const ts = e.t + 1 / (r.f0 || 60);
+      const k = r.t.findIndex(x => x >= ts - 1e-6);
+      if (k < 0 || r.t[k] >= tEnd || !d.cb[k]) return na;
+      const neutral = /^(51|67)N/.test(key), el = neutral ? "N" : "P", pu = st[`51${el}_pu`];
+      const I = neutral ? d.I0x3[k] : d.I[k]["ABC".indexOf(key.slice(-1))];
+      if (!pu || !(I > pu)) return na;
+      const qty = neutral ? "3I0" : `|I${key.slice(-1).toLowerCase()}|`;
+      return `${head} ${qty}=${I.toFixed(0)} A, Timer Set = ${curveTime(st.curve, st[`51${el}_tms`], I / pu).toFixed(3)} s`;
+    }
+    if (e.type === "DROPOUT") {
+      const key = s.split(" ")[0];
+      return `${key} DROPOUT` + (timed(key) ? ", Timer Reset" : "");
+    }
+    if (e.type === "TRIP") {
+      if (/\(inst\)/.test(s)) return `${s}, instantaneous`;
+      s = s.replace(/\s*t_op=[0-9.]+s/, "");
+      const key = s.split(" ")[1], p = pickedAt(key);
+      return timed(key) && p !== null ? `${s}, timer ran ${(e.t - p).toFixed(3)} s from pickup` : s;
+    }
+    return s;
   }
 
   renderMarks() {
     const r = this.run, host = $("#pl-marks"); host.innerHTML = "";
     const evs = [
       ...r.events_sim.map(e => ({ t: e.t, k: kindOf(e, "sim"), text: e.text })),
-      ...r.events_relay.map(e => ({ t: e.t, k: kindOf(e, "relay"), text: e.text })),
+      ...r.events_relay.map(e => ({ t: e.t, k: kindOf(e, "relay"), text: `${e.id} ${this.relayText(e)}` })),
     ].sort((a, b) => a.t - b.t);
     const W = Math.max(host.clientWidth || $("#pl-track").clientWidth || 600, 100), gap = 16;
     const groups = [];
@@ -521,7 +615,7 @@ class App {
   infoHTML(key) {
     const sw = c => `<i class="tile-sw ${c}"></i>`;
     if (key === "alarm") return `<b>SCADA alarm states</b>${ANN_KEY.map(([c, code, t, bl]) => `<div class="ir">${sw(c)}<span><b>${code}</b> ${t}${bl ? ", blinking" : ""}</span></div>`).join("")}<div class="ir">${sw("")}<span>Normal</span></div><p>States follow the RTU scan rate. Click a tile to open its information panel.</p>`;
-    if (key === "soe") return `<b>Sequence of events</b><p>Records downloaded from field IEDs, time-stamped by each IED. The operator receives them only after the event.</p>${["fault", "pickup", "dir", "trip", "cbopen", "cbclose", "dropout", "dertrip", "island", "cleared"].map(k => `<div class="ir">${EV[k].svg}<span>${EV[k].label}</span></div>`).join("")}`;
+    if (key === "soe") return `<b>Sequence of events</b><p>Records downloaded from field IEDs, time-stamped by each IED. The operator receives them only after the event.</p><p>Timer Set is the time delay from the relay curve at the current the relay measures one power cycle after pickup, when its one-cycle measuring filter has settled. It is N/A when the element resets or the relay trips within that cycle.</p>${["fault", "pickup", "dir", "trip", "cbopen", "cbclose", "dropout", "dertrip", "island", "cleared"].map(k => `<div class="ir">${EV[k].svg}<span>${EV[k].label}</span></div>`).join("")}`;
     if (key === "phasor") return `<b>Output phasor</b><p>Phasors of the channels shown in the output waveform, at the playback cursor. Angles are referred to ${this.phasor.refText || "phase A of the first channel"}. N is the phasor sum of A, B and C (3I0 or 3V0). Values are fundamental components; Inst is the instantaneous fundamental value.</p>`;
     if (key === "catalog") return `<b>Stored runs</b><p>Runs are numbered in the order they were produced. Labels and notes are saved on this computer; labels can also be used as a filter.</p>`;
     if (key === "chart") {

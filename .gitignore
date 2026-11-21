@@ -18,3 +18,6 @@ batch_matlab*/batch_results.json
 # logs
 *.log
 batch/batch_log*.txt
+
+# Proof of Urgencies campaign (large: results, waveforms, raw Simulink output, models)
+campaigns/

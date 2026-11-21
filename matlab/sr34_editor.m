@@ -46,7 +46,7 @@ try
     f = fullfile(fileparts(cfgfile), 'editor_run.mat');
     save(f, 'simV', 'simI', 'log', 'wall', 'tb', '-v7');
     fprintf('SimRELAY: sending the result to the web app...\n');
-    r = webwrite([url '/api/simulink/import'], struct('mat', f), ...
+    r = webwrite([url '/api/simulink/import'], struct('mat', f, 'cfg', cfgfile), ...
         weboptions('MediaType', 'application/json', 'Timeout', 180));
     if isfield(r, 'error')
         warning('SimRELAY: the web app could not process the run: %s', r.error);

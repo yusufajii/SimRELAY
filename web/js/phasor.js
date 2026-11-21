@@ -58,13 +58,17 @@ export class PhasorView {
     const live = rows.find(r => r.i === 0 && Math.hypot(r.re, r.im) > 1e-6);
     const ref = live ? Math.atan2(live.im, live.re) : 0;
     this.refText = live ? `channel ${live.c.no} phase A (${live.c.name})` : "";
+    // colour marks the phase, line style marks the channel; the table swatch shows both
+    const order = [...new Set(rows.map(r => r.c.no))];
+    const dashOf = c => DASH[order.indexOf(c.no) % DASH.length];
+    const swatch = r => `<svg class="ph-sw" width="20" height="8" viewBox="0 0 20 8"><line x1="1" y1="4" x2="19" y2="4" stroke="${PH[r.i]}" stroke-width="2" stroke-dasharray="${dashOf(r.c)}"/></svg>`;
     // table
     tb.innerHTML = rows.map(r => {
       const mag = Math.hypot(r.re, r.im);
       const ang = mag > 1e-9 ? ((Math.atan2(r.im, r.re) - ref) * 180 / Math.PI % 360 + 360) % 360 : null;
       const inst = Math.SQRT2 * (r.re * Math.cos(r.th) - r.im * Math.sin(r.th));
       const d = r.unit === "kV" ? 3 : 1;
-      return `<tr class="${r.i === 0 ? "first" : ""}"><td class="ch"><i style="background:${PH[r.i]}"></i>${r.c.no}${PL[r.i]}</td><td>${r.i === 0 ? `${r.c.name}` : ""}</td>` +
+      return `<tr class="${r.i === 0 ? "first" : ""}"><td class="ch">${swatch(r)}${r.c.no}${PL[r.i]}</td><td>${r.i === 0 ? `${r.c.name}` : ""}</td>` +
         `<td class="r">${fmt(mag, d)} ${r.unit}</td><td class="r">${fmt(mag * Math.SQRT2, d)}</td><td class="r">${ang === null ? "N/A" : fmt(ang, 1) + "°"}</td><td class="r">${fmt(inst, d)}</td></tr>`;
     }).join("");
     // polar diagram: each channel scaled to its own largest phasor
@@ -79,14 +83,14 @@ export class PhasorView {
     }
     const byCh = {};
     for (const r of rows) (byCh[r.c.no] = byCh[r.c.no] || []).push(r);
-    Object.values(byCh).forEach((list, ci) => {
+    Object.values(byCh).forEach(list => {
       const max = Math.max(...list.filter(r => r.i < 3).map(r => Math.hypot(r.re, r.im)), 1e-9);
       for (const r of list) {
         const mag = Math.hypot(r.re, r.im);
         if (mag < max * 0.02) continue;
         const a = Math.atan2(r.im, r.re) - ref, len = Math.min(mag / max, 1.15) * R * 0.92;
         const x = len * Math.cos(a), y = -len * Math.sin(a);
-        el("line", { x1: 0, y1: 0, x2: x, y2: y, stroke: PH[r.i], "stroke-width": 1.8, "stroke-dasharray": DASH[ci % DASH.length] });
+        el("line", { x1: 0, y1: 0, x2: x, y2: y, stroke: PH[r.i], "stroke-width": 1.8, "stroke-dasharray": dashOf(r.c) });
         const u = 7 / Math.max(len, 1), bx = x - x * u, by = y - y * u, nx = -y * u * 0.45, ny = x * u * 0.45;
         el("path", { d: `M${x},${y} L${bx + nx},${by + ny} L${bx - nx},${by - ny} Z`, fill: PH[r.i] });
         const lt = el("text", { x: x * 1.08 + (x >= 0 ? 3 : -3), y: y * 1.08 + 3, "text-anchor": x >= 0 ? "start" : "end", class: "plab", fill: PH[r.i] });
