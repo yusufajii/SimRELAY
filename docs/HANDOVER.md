@@ -190,6 +190,18 @@ Sudah selesai:
    - Output Waveform, Output Phasor, dan Alarms and Events bisa di-detach ke jendela browser
      terpisah (panel dipindah dengan `adoptNode`, tetap sinkron) dan dikembalikan lewat tombol
      Attach atau dengan menutup jendelanya. Browser harus mengizinkan pop-up untuk halaman ini.
+10. Panel kanan dan track playback:
+    - Panel kanan berisi tiga bagian bertumpuk: SCADA Alarm (grid annunciator per bus, relai/CB,
+      DER, dan CB-GI; merah = alarm, amber berkedip = warning, abu = tanpa tegangan atau terbuka),
+      Relay Characteristic (selector relai; TCC log-log untuk OCR/DOCR dengan kurva relai lain
+      sebagai pembanding koordinasi; bidang R-X dengan zona mho Z1 sampai Z3 dan impedansi loop
+      untuk distance; bidang Id-Ir untuk 87L), dan Sequence of Events.
+    - Daftar alarm SCADA berbentuk tabel dihapus.
+    - Semua event SOE dan event fisik tampil sebagai ikon di track playback (dikelompokkan bila
+      berdekatan; tooltip berisi daftar event, klik untuk lompat ke waktunya). Ikon yang sama
+      dipakai di tabel SOE (`web/js/icons.js`).
+    - Tabel nilai di Output Waveform hanya untuk kanal non-fasor; nilai arus dan tegangan cukup
+      di tabel Output Phasor.
 
 ## 5. Ringkasan hasil kampanye Python (batch/)
 

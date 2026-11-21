@@ -235,7 +235,11 @@ export class Scope {
     g.restore();
     const xc = X(this.app.t);
     if (xc >= L && xc <= L + pw) { g.strokeStyle = "#0f172a"; g.lineWidth = 1.2; g.beginPath(); g.moveTo(xc, T); g.lineTo(xc, T + ph); g.stroke(); }
-    this.table(row, d, cols);
+    // Current and voltage values are listed once, in the Output Phasor table; only signals that
+    // have no phasor (frequency, DER power, timer progress) keep a value table here.
+    const own = d.mode === "series";
+    row.tab.style.display = own ? "" : "none";
+    if (own) this.table(row, d, cols);
     if (row.hover !== null && row.hover !== undefined && row.hover >= L && row.hover <= L + pw) {
       const th = t0 + (row.hover - L) / pw * (t1 - t0);
       g.strokeStyle = "#94a3b8"; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(row.hover, T); g.lineTo(row.hover, T + ph); g.stroke(); g.setLineDash([]);

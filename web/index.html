@@ -99,23 +99,23 @@
         <span class="ttl caps">Alarms and Events</span>
         <div class="tools"><button class="btn tiny icon-only det-btn" data-panel="p-field" title="Open in a separate window"><svg class="ic"><use href="#i-detach"/></svg></button></div>
       </div>
-      <div class="tabs" id="rec-tabs">
-        <button class="tab on" data-tab="alarms">SCADA Alarm List <span class="cnt" id="al-cnt"></span></button>
-        <button class="tab" data-tab="soe">Relay Sequence of Events</button>
-      </div>
-      <div class="pb rec-host">
-        <div class="tabpane on" id="tab-alarms">
-          <div class="soe-note">Alarms received by the control centre, updated at the RTU scan rate. Most recent first.</div>
-          <table class="soe alarms" id="alarm-list"><thead><tr><th>Time</th><th>Point</th><th>Description</th><th>Priority</th></tr></thead><tbody></tbody></table>
-        </div>
-        <div class="tabpane" id="tab-soe">
-          <div class="soe-note">Records downloaded from field IEDs, time-stamped by each IED. The operator receives these only after the event.</div>
-          <div class="soe-tools">
-            <select id="soe-filter"><option value="">All IEDs</option></select>
-            <label class="tg"><input type="checkbox" id="soe-all"> Show records after the playback time</label>
+      <div class="pb rec-stack">
+        <section class="sec" id="sec-alarm">
+          <div class="sec-h"><span class="sec-t">SCADA Alarm</span><span class="info" tabindex="0" data-info="alarm" aria-label="Information">i</span><span class="sec-s" id="al-sum"></span></div>
+          <div class="ann" id="ann"></div>
+        </section>
+        <section class="sec" id="sec-char">
+          <div class="sec-h"><span class="sec-t">Relay Characteristic</span><span class="info" tabindex="0" data-info="chart" aria-label="Information">i</span><select id="rc-sel" title="Relay to show"></select></div>
+          <div class="rc-info" id="rc-info"></div>
+          <svg id="rc-svg" class="rc-svg" viewBox="0 0 360 250"></svg>
+        </section>
+        <section class="sec grow" id="sec-soe">
+          <div class="sec-h"><span class="sec-t">Sequence of Events</span><span class="info" tabindex="0" data-info="soe" aria-label="Information">i</span>
+            <div class="sec-tools"><select id="soe-filter"><option value="">All IEDs</option></select>
+            <label class="tg"><input type="checkbox" id="soe-all"> Show later records</label></div>
           </div>
           <table class="soe" id="soe-relay"><thead><tr><th>IED Time</th><th>IED</th><th>Record</th></tr></thead><tbody></tbody></table>
-        </div>
+        </section>
       </div>
     </section>
 
@@ -151,6 +151,7 @@
       <section id="p-phasor" class="panel">
         <div class="ph">
           <span class="ttl caps">Output Phasor</span>
+          <span class="info" tabindex="0" data-info="phasor" aria-label="Information">i</span>
           <span class="ph-t" id="ph-time"></span>
           <div class="tools"><button class="btn tiny icon-only det-btn" data-panel="p-phasor" title="Open in a separate window"><svg class="ic"><use href="#i-detach"/></svg></button></div>
         </div>
@@ -158,7 +159,6 @@
           <div class="ph-polar"><svg id="ph-polar" viewBox="-130 -130 260 260"></svg></div>
           <div class="ph-tab">
             <table class="pht2" id="ph-table"><thead><tr><th>Ch</th><th>Signal</th><th class="r">RMS</th><th class="r">Peak</th><th class="r">Phase</th><th class="r">Inst</th></tr></thead><tbody></tbody></table>
-            <div class="ph-ref" id="ph-ref"></div>
           </div>
         </div>
       </section>
@@ -187,6 +187,7 @@
       <div id="pl-marks"></div>
       <div class="pl-head" id="pl-head"></div>
       <div class="pl-tip" id="pl-tip"></div>
+      <div class="pl-evtip" id="pl-evtip"></div>
     </div>
     <div class="pl-cyc" id="pl-cyc">Cycle 0</div>
   </footer>
@@ -219,8 +220,7 @@
     <div class="m-box">
       <div class="m-head">
         <div>
-          <div class="m-title" id="cat-title">Stored Runs</div>
-          <div class="m-sub">Runs are numbered in the order they were produced. Labels and notes are saved on this computer; labels can also be used as a filter.</div>
+          <div class="m-title" id="cat-title">Stored Runs <span class="info" tabindex="0" data-info="catalog" aria-label="Information">i</span></div>
         </div>
         <button class="m-x" id="cat-x" title="Close (Esc)"><svg class="ic"><use href="#i-close"/></svg></button>
       </div>
