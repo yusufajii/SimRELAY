@@ -177,6 +177,37 @@ Sudah selesai:
      Status ditulis sebagai teks berwarna dengan penanda kotak kecil, dan pemisah memakai garis
      tipis.
 
+9. Interkoneksi Simulink dari UI (21 November 2026):
+   - Tombol **Simulink** di toolbar SLD (`/api/simulink/open` -> `matlab/sr34_open.m`) membangun model
+     skenario yang sedang tampil, menyimpannya ke `cache/simulink/sr34_model.slx`, lalu membuka Simulink Editor.
+   - Model berhierarki dan mengikuti SLD web: busbar hitam per bus (berisi pengukuran tegangan),
+     subsystem per saluran/regulator/trafo (dengan CB dan CT titik proteksi), beban/kapasitor/DER/gangguan
+     menggantung di bawah bus, sumber GI di kiri bus 800, kontroler di subsystem "Measurements and control".
+     Sinyal lewat Goto/From global (V<n>, I<ch>, B<ch>, U<ch>, J<ch>). Pengelompokan dari bridge
+     (`Netlist.group`, `cfg.groups`, `cfg.bus_xy`); path blok di `sr34_paths.m`. Rangkaian listrik identik:
+     4 run MATLAB lama dijalankan ulang, arus/trip/temuan sama persis.
+   - Tata letak di `sr34_build.m`: trunk disejajarkan port-ke-port (garis lurus), lateral di barisnya sendiri,
+     rute ortogonal dengan kolom per fasa, cek tabrakan antarbaris (bus digeser ke kanan bila bertumpuk).
+     Jebakan: Connection Port hanya menerima satu garis; port subsystem boleh dicabangkan asal port baru
+     disebut pertama di `add_line`; vektor kosong 0x1 menjalankan `for` sekali.
+   - Tombol **Run** di Simulink: `InitFcn`/`StopFcn` (`sr34_editor.m`) memuat konfigurasi dari
+     `cache/simulink/sr34_model_cfg.json`, me-reset kontroler, lalu mengirim simV/simI/log ke
+     `/api/simulink/import`; server memprosesnya dengan `load_results` yang sama dan UI memuatnya otomatis
+     (polling `/api/simulink/last`). Hasil uji identik dengan run engine. Run engine (`sr34_run`) memasang
+     `SR34_ENGINE` sehingga callback tidak ikut campur, dan meminta `ReturnWorkspaceOutputs` 'on'.
+   - Perubahan ini mengubah fingerprint MATLAB, jadi cache run MATLAB lama dihitung ulang saat dibuka.
+   - Komposit buatan sendiri (opsi B, dipilih pengguna dibanding blok tiga fasa bawaan SPS karena blok
+     bawaan memaksa saluran tertransposisi, tidak menampung lateral 1 fasa dan tap regulator per fasa,
+     serta memutus kecocokan dengan engine Python): setiap kelompok adalah subsystem bermask dengan
+     ikon simbol SLD (`icon` di `sr34_build.m`), dialog berisi parameter dari bridge (`groups[].kind`,
+     `groups[].info`), dan isi tertata deterministik (`glayout`: satu baris per fasa, kolom mengikuti
+     aliran arus; delta vertikal; sumber terkendali diputar 'left'). Banner "SimRelay 34" dengan logo STEI.
+     Isinya tetap blok SPS standar. Port pitch 20 px (Simulink membulatkan jarak port ke kelipatan 5) dan
+     posisi blok ditetapkan ulang setelah port dibuat (Simulink membesarkan subsystem saat port ditambah).
+   - Validasi setelah komposit: 4 run MATLAB lama identik (arus, trip, temuan); run dari editor untuk
+     "Blinding in IBR Microgrid" identik dengan run engine sampai pembulatan floating-point (~1e-7 relatif).
+   - Belum: uji setara per komponen terhadap blok bawaan dan benchmark aliran daya IEEE 34 (untuk Bab 3).
+
 ## 5. Ringkasan hasil kampanye Python (batch/)
 
 5.247 kasus: H1 penetrasi x beban (2.013), H2 penetrasi x Rf (2.013), E eskalasi kelas relai (1.023),

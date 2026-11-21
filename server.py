@@ -65,6 +65,8 @@ def _matlab_fingerprint():
     """MATLAB engine results also depend on matlab/*.m and the bridge."""
     h = hashlib.sha1(FINGERPRINT.encode())
     for p in sorted(glob.glob(os.path.join(ROOT, "matlab", "*.m"))) + [os.path.join(ROOT, "engine", "matlab_bridge.py")]:
+        if os.path.basename(p) in ("sr34_open.m", "sr34_editor.m"):   # editor only, never changes results
+            continue
         with open(p, "rb") as f:
             h.update(f.read())
     return h.hexdigest()[:16]
@@ -177,6 +179,66 @@ def get_result(sc, save_log=False):
             return f.read()
 
 
+SIMULINK_DIR = os.path.join(CACHE, "simulink")
+SIMULINK_LAST = {"key": None, "run_id": None, "t": 0.0}     # last run made from the Simulink Editor
+SERVER_URL = "http://127.0.0.1:8034"
+
+
+def open_in_simulink(sc):
+    """Build the Simulink model of one scenario, save it as .slx and open it in the Simulink Editor.
+
+    Uses the same netlist export, builder and MATLAB session as the MATLAB engine, so the diagram
+    shown is exactly the model that engine simulates. The scenario and configuration are kept in
+    cache/simulink so that a run started from the editor can be processed by import_simulink_run.
+    Kept here rather than in the bridge so that the MATLAB result cache fingerprint is not
+    affected. Returns the path of the saved .slx file.
+    """
+    from engine.matlab_bridge import SESSION, export_config
+    cfg, _ = export_config(copy.deepcopy(sc), SETTINGS)
+    cfg["name"] = str(sc.get("name") or "custom scenario")
+    os.makedirs(SIMULINK_DIR, exist_ok=True)
+    _write_json(os.path.join(SIMULINK_DIR, "scenario.json"), sc)
+    with SESSION.lock:
+        eng = SESSION.start()
+        cf = os.path.join(SESSION.tmp, f"cfg_open_{os.getpid()}.json")
+        with open(cf, "w") as f:
+            json.dump(cfg, f)
+        return eng.sr34_open(cf, SIMULINK_DIR, SERVER_URL, nargout=1)
+
+
+def import_simulink_run(mat_path):
+    """Process a run made with the Run button of the Simulink Editor exactly like an engine run.
+
+    The measured phasors and controller log go through the same load_results, Fault Hunter and
+    packing as a MATLAB engine run, and the result is stored in the run cache as a new run.
+    """
+    import scipy.io
+    from engine.matlab_bridge import load_results
+    with open(os.path.join(SIMULINK_DIR, "scenario.json")) as f:
+        sc = json.load(f)
+    with open(os.path.join(SIMULINK_DIR, "sr34_model_cfg.json")) as f:
+        cfg = json.load(f)
+    mat = scipy.io.loadmat(mat_path, squeeze_me=True, struct_as_record=False)
+    sim = load_results(Simulator, copy.deepcopy(sc), SETTINGS, cfg, mat)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    key = scenario_key(dict(sc, engine="matlab", origin="simulink-editor", stamp=stamp))
+    folder = os.path.join(RUN_CACHE, key)
+    hunt = analyze(sim)
+    payload = pack(sim, hunt, key)
+    payload["engine"] = "matlab"
+    payload["engine_label"] = "MATLAB Simulink (Simscape Electrical, phasor), run from the Simulink Editor"
+    payload["origin"] = "simulink"
+    src = WaveSource.from_sim(sim)
+    src.save(folder)
+    with open(os.path.join(folder, "result.json"), "w") as f:
+        json.dump(payload, f, allow_nan=False, default=str)
+    _remember_wave(key, src)
+    rid = run_meta(key, _preset_keys())["run_id"]
+    SIMULINK_LAST.update(key=key, run_id=rid, t=time.time())
+    print(f"[SimRelay] Imported the Simulink Editor run of {sc.get('name') or 'custom scenario'} as {rid} ({key}).")
+    return key, rid
+
+
 def get_wave(key):
     with WAVE_LOCK:
         if key in WAVES:
@@ -241,7 +303,8 @@ def run_meta(key, pkeys):
     H = j.get("hunter") or {}
     rel = sc.get("relays") or {}
     meta = {
-        "key": key, "run_id": run_id(key, preset, eng), "source": "preset" if preset else "custom",
+        "key": key, "run_id": run_id(key, preset, eng),
+        "source": "preset" if preset else ("simulink" if j.get("origin") == "simulink" else "custom"),
         "preset": preset["id"] if preset else None, "code": preset["code"] if preset else None,
         "name": sc.get("name") or (preset["name"] if preset else "Custom scenario"),
         "desc": preset["desc"] if preset else "",
@@ -411,6 +474,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if src is None:
                     return self._json({"error": "Run data not found in cache. Please run the scenario again."}, 404)
                 return self._json(waveform(src, sig, mode))
+            if u.path == "/api/simulink/last":
+                return self._json(SIMULINK_LAST)
             if u.path == "/api/catalog":
                 return self._json(catalogue())
             if u.path == "/api/result":
@@ -460,6 +525,17 @@ class Handler(SimpleHTTPRequestHandler):
             if u.path == "/api/run":
                 save = (body.get("sim") or {}).get("save", True)
                 return self._bytes(get_result(body, save_log=save))
+            if u.path == "/api/simulink/open":
+                if not MATLAB_AVAILABLE:
+                    return self._json({"error": "MATLAB Engine API for Python is not installed."}, 503)
+                sc = {k: v for k, v in body.items() if k != "engine"}
+                t0 = time.time()
+                slx = open_in_simulink(sc)
+                print(f"[SimRelay] Opened {sc.get('name') or 'custom scenario'} in Simulink in {time.time() - t0:.1f} s ({slx}).")
+                return self._json({"ok": True, "slx": slx})
+            if u.path == "/api/simulink/import":
+                key, rid = import_simulink_run(str(body["mat"]))
+                return self._json({"ok": True, "key": key, "run_id": rid})
             if u.path == "/api/labels":
                 key = str(body["key"])
                 if not all(c in "0123456789abcdef" for c in key):
@@ -500,6 +576,8 @@ def main():
     threading.Thread(target=precompute_all, daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     url = f"http://{a.host}:{a.port}"
+    global SERVER_URL
+    SERVER_URL = url                     # where a run started from the Simulink Editor reports back
     print(f"[SimRelay] Ready at {url}  (Ctrl+C to stop)")
     if not a.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()

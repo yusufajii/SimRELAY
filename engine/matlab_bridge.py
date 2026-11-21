@@ -45,12 +45,32 @@ class Netlist:
         self.n_ctrl_v = 0       # controlled voltage source channels
         self.n_ctrl_i = 0       # controlled current source channels
         self.n_imeas = 0
+        self.groups = []        # diagram groups: one Simulink subsystem each (layout only)
+        self.g = 0              # group of the elements added next (1-based)
 
     def node(self):
         self.n += 1
         return self.n
 
+    def group(self, name, left="", right="", x=0.0, y=0.0, kind="", info=None):
+        """Start a diagram group. LEFT is the bus whose nodes enter on the left side of the
+        subsystem (the group hangs downstream of it), RIGHT the bus on the right side (the group
+        feeds it from upstream). X, Y place the subsystem in single-line diagram coordinates.
+        KIND selects the composite block icon and INFO lines go to its parameter dialog."""
+        name = name.replace("/", "-")
+        for i, g in enumerate(self.groups):
+            if g["name"] == name:
+                self.g = i + 1
+                for line in info or []:
+                    if line not in g["info"]:
+                        g["info"].append(line)
+                return
+        self.groups.append({"name": name, "left": left, "right": right, "x": float(x), "y": float(y),
+                            "kind": kind, "info": list(info or [])})
+        self.g = len(self.groups)
+
     def add(self, **kw):
+        kw["g"] = self.g
         self.el.append(kw)
         return kw
 
@@ -105,6 +125,21 @@ def export_config(scenario, settings, f0=60.0):
         i = m.idx.get((bus, p))
         return -1 if i is None else i + 1
 
+    # Diagram layout (does not change the circuit): positions follow the web single-line diagram.
+    def xy(bus):
+        b = net["buses"][bus]
+        return float(b.get("x") or 0.0), float(b.get("y") or 0.0)
+    n_shunt = {}
+
+    def shunt(name, bus, kind, info):
+        """Group hanging below and to the right of its bus (loads, capacitors, DER, faults)."""
+        x, y = xy(bus)
+        if name.replace("/", "-") not in [g["name"] for g in nl.groups]:
+            n_shunt[bus] = n_shunt.get(bus, 0) + 1
+        j = n_shunt.get(bus, 1) - 1
+        nl.group(name, left=bus, x=x + 22 + 24 * j, y=y + 24, kind=kind, info=info)
+    KIND = {"line": "Line", "reg": "Regulator", "xfmr": "Transformer"}
+
     # ---------------------------------------------------------------- IED breakers
     ied_of_branch = {}
     for meta in net["ieds"]:
@@ -121,6 +156,25 @@ def export_config(scenario, settings, f0=60.0):
         kk = [PH.index(p) for p in ph]
         fi = [nid(br["from"], p) for p in ph]
         ti = [nid(br["to"], p) for p in ph]
+        (x1, y1), (x2, y2) = xy(br["from"]), xy(br["to"])
+        gname = f"{KIND.get(br['kind'], 'Branch')} {br['from']}-{br['to']}"
+        if br["id"] in ied_of_branch:
+            gname += f" (CB {ied_of_branch[br['id']]})"
+        info = [f"From bus {br['from']} to bus {br['to']}, phases {''.join(ph)}"]
+        if br["kind"] == "line":
+            info.append(f"IEEE 34 line configuration {br.get('cfg')}, length {br.get('len_ft', 0):,.0f} ft; "
+                        "full 3x3 phase impedance matrix (no transposition assumed)")
+        elif br["kind"] == "reg":
+            info.append("Single-phase regulators, ratio 1 + 0.00625 x tap; taps "
+                        + ", ".join(f"{p}: {br['taps'][PH.index(p)]:+d}" for p in ph)
+                        + "; series impedance 0.01 + j0.05 ohm")
+        else:
+            info.append(f"{br['kva']:.0f} kVA, {br['kv1']} / {br['kv2']} kV, R = {br['r_pct']} %, X = {br['x_pct']} %")
+        if br["id"] in ied_of_branch:
+            info.append(f"Protection point {ied_of_branch[br['id']]}: circuit breaker and current transformers "
+                        "(relay logic runs in the Measurements and control block)")
+        nl.group(gname, left=br["from"], right=br["to"], x=(x1 + x2) / 2, y=(y1 + y2) / 2,
+                 kind=br["kind"] + ("_cb" if br["id"] in ied_of_branch else ""), info=info)
         chans = [0, 0, 0]
         start = []
         for a_, k in enumerate(kk):
@@ -177,6 +231,9 @@ def export_config(scenario, settings, f0=60.0):
                 y = np.conj(S) / (3 * vph ** 2)
             if a < 0 or b < 0:
                 continue
+            shunt(f"Load {ld['bus']}", ld["bus"], "load",
+                  [f"{ld['id']} ({ld['conn']}-connected, {ld.get('model', 'PQ')} in IEEE 34): modelled as constant impedance",
+                   f"Phase {PH[k]}: P = {S.real / 1e3:.1f} kW, Q = {S.imag / 1e3:.1f} kvar at the scenario load level"])
             nl.rl(a, b, 1.0 / y)
             if clpu and fd in clpu.get("feeders", ["A"]):
                 # extra load current during cold load pickup, drawn from a to b by a controlled source
@@ -187,6 +244,8 @@ def export_config(scenario, settings, f0=60.0):
         if not caps_on.get(c["id"], True):
             continue
         vph = net["buses"][c["bus"]]["vbase"]
+        shunt(f"Capacitor {c['id']}", c["bus"], "cap",
+              [f"Shunt capacitor bank, " + ", ".join(f"{PH[k]}: {c['kvar'][k]:.0f} kvar" for k in range(3))])
         for k, p in enumerate(PH):
             yc = 1j * c["kvar"][k] * 1e3 / vph ** 2
             nl.add(type="cap", a=nid(c["bus"], p), b=0, c=float(yc.imag / w))
@@ -197,6 +256,11 @@ def export_config(scenario, settings, f0=60.0):
     island_t0 = g.get("mode", "grid") != "grid" and (g.get("t_island") in (None, 0, 0.0))
     sub_brk, sub_src = [], []
     vph = net["buses"]["800"]["vbase"]
+    x800, y800 = xy("800")
+    nl.group("Substation source", right="800", x=x800 - 50, y=y800, kind="source",
+             info=[f"Grounded Thevenin source behind the substation breaker, E = {sub['v_pu']:.3f} pu",
+                   f"Source impedance {m.Zsub.real:.3f} + j{m.Zsub.imag:.3f} ohm per phase (Z0 = Z1)",
+                   "Breaker opens to island the feeder when the scenario asks for it"])
     for k, p in enumerate(PH):
         n1, n2 = nl.node(), nl.node()
         sub_src.append(nl.vsrc(n1, 0))
@@ -222,6 +286,10 @@ def export_config(scenario, settings, f0=60.0):
         elif typ == "3PH":
             pairs = [(PH.index(p), None, rf) for p in bphs]
         brks, meas, mch = [], [0, 0, 0], []
+        shunt(f"Fault F{fi_+1} at {node}", node, "fault",
+              [f"{typ} fault on phases {f.get('phases', 'a')}, Rf = {rf:.3g} ohm",
+               f"Applied at t = {float(f['t_on']):.3f} s" + ("" if f.get("t_off") is None else f", cleared by itself at t = {float(f['t_off']):.3f} s"),
+               "Fault breakers with on-resistance Rf; current transformers measure the fault current"])
         for (i, j, r) in pairs:
             a = nid(node, PH[i])
             a2, ch = nl.imeas(a)
@@ -257,6 +325,13 @@ def export_config(scenario, settings, f0=60.0):
              "t_anti_island": float(d.t_anti_island), "trip_at": -1.0 if d.trip_at is None else float(d.trip_at),
              "online": int(bool(d.online)), "feeder": "B" if net["buses"][d.bus]["feeder"] == "B" else "A"}
         # connection: DER breaker -> current measurement -> sources
+        shunt(f"DER {d.id} ({d.type}) at {d.bus}", d.bus, {"SG": "der_sg", "IBR-GFL": "der_gfl", "IBR-GFM": "der_gfm"}[d.type],
+              [f"{d.type}, S = {d.S / 1e3:.0f} kVA, P setpoint {d.p_set:.2f} pu, Q setpoint {d.q_set:.2f} pu",
+               f"Interconnection transformer {d.ground}" + (" (zero-sequence source)" if d.ground == "YgD" else ""),
+               {"SG": "Voltage E'' behind X''(t) decaying to X' and Xd (IEC 60909)",
+                "IBR-GFL": f"Current source with PLL and 1-cycle lag, current limit {getattr(d, 'imax', 1.2):.2f} pu (IEEE 2800)",
+                "IBR-GFM": f"Voltage source behind virtual impedance, current limit {getattr(d, 'imax', 1.3):.2f} pu"}[d.type],
+               "Breaker and current transformers at the point of connection; control runs in the Measurements and control block"])
         conn, meas, brk = [], [], []
         for k in range(3):
             n_b = nl.node()
@@ -324,6 +399,7 @@ def export_config(scenario, settings, f0=60.0):
                                      "t_island": -1.0 if g.get("t_island") is None or g.get("mode", "grid") == "grid" else float(g["t_island"]),
                                      "closed0": int(not island_t0)},
         "faults": faults, "ders": ders, "ieds": ieds, "topo": topo, "bus_nodes": bus_nodes, "n_bus": len(buses),
+        "bus_ids": [str(b) for b in buses], "bus_xy": [list(xy(b)) for b in buses], "groups": nl.groups,
         "der_bus": der_bus, "fault_bus": fault_bus, "mode_grid": int(g.get("mode", "grid") == "grid"),
         "events": [{"t": float(e["t"]), "type": 1 if e["type"] == "CB_CLOSE" else 0, "ied": ied_ids.index(e["id"]) + 1}
                    for e in sorted(sc.get("events", []), key=lambda e: e["t"]) if e.get("type") in ("CB_OPEN", "CB_CLOSE")],
@@ -334,7 +410,7 @@ def export_config(scenario, settings, f0=60.0):
     import hashlib
     def shape(e):
         """Element without its values: what decides which blocks exist and how they connect."""
-        k = {x: e[x] for x in ("type", "a", "b", "ch") if x in e}
+        k = {x: e[x] for x in ("type", "a", "b", "ch", "g") if x in e}
         if e["type"] == "rl":
             k["bt"] = "R" if e["x"] == 0 else ("L" if e["x"] > 0 else "C") + ("R" if e["r"] > 0 else "")
         return k
