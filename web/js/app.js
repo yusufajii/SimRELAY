@@ -2,6 +2,8 @@
 import { SLD, vStatus, LAYERS, QTY, FUNC } from "./sld.js";
 import { Scope } from "./scope.js";
 import { PhasorView } from "./phasor.js";
+import { AlarmTiles, RelayChart, ANN_KEY } from "./protect.js";
+import { EV, kindOf } from "./icons.js";
 import { Editor } from "./editor.js";
 
 // Panels can live in detached windows, so lookups search the main document and every detached one.
@@ -26,6 +28,8 @@ class App {
     this.detached = {};
     this.scope = new Scope($("#scope"), this);
     this.phasor = new PhasorView(this);
+    this.tiles = new AlarmTiles(this);
+    this.relayChart = new RelayChart(this);
     this.editor = new Editor(this);
     this._wire();
     this.boot();
@@ -288,6 +292,8 @@ class App {
     this.scope.setRun(run, rows);
     // SOE filter
     const f = $("#soe-filter"); f.innerHTML = `<option value="">All IEDs</option>` + run.ied.map(d => `<option>${d.id}</option>`).join("");
+    this.tiles.build(run);
+    this.relayChart.setRun(run);
     this.renderMarks();
     $("#pl-T").textContent = run.T.toFixed(3) + " s";
     const t0 = run.faults.length ? Math.max(run.faults[0].t_on - 0.08, 0) : 0;
@@ -345,7 +351,8 @@ class App {
     const pct = t / r.T * 100;
     $("#pl-fill").style.width = pct + "%"; $("#pl-head").style.left = pct + "%";
     this.renderKPI(k);
-    this.renderAlarms(tOp);
+    this.tiles.update(r, k, iedState);
+    this.relayChart.draw();
     this.renderSOE(t);
     this.scope.drawAll();
     this.phasor.draw();
@@ -390,17 +397,6 @@ class App {
     return br ? br.id : null;
   }
 
-  renderAlarms(tOp) {
-    const r = this.run;
-    const al = r.events_scada.filter(a => a.t <= tOp + 1e-9);
-    const key = `${r.id}|${al.length}`;
-    if (key === this._alKey) return; this._alKey = key;
-    $("#al-cnt").textContent = al.length ? `(${al.length})` : "";
-    const PRI = { hi: "High", mid: "Medium", lo: "Low", ok: "Normal" };
-    $("#alarm-list tbody").innerHTML = al.slice().reverse().map(a =>
-      `<tr class="p-${a.sev}"><td>${clock(a.t)}</td><td>${esc(this.alarmPoint(a.id))}</td><td>${esc(alarmText(a))}</td><td><span class="pri ${a.sev}">${PRI[a.sev] || a.sev}</span></td></tr>`
-    ).join("") || `<tr><td colspan="4" class="empty">No alarms up to t = ${tOp.toFixed(2)} s</td></tr>`;
-  }
   alarmPoint(id) {
     const T = this.run.topology;
     if (T.buses.some(b => b.id === id)) return `Bus ${id}`;
@@ -415,18 +411,31 @@ class App {
     if (key === this._soeKey) return; this._soeKey = key;
     const rows = r.events_relay.filter(e => (!flt || e.id === flt) && e.type !== "DROPOUT" && (all || e.t <= t + 1e-9));
     const tb = $("#soe-relay tbody");
-    tb.innerHTML = rows.map(e => `<tr class="k-${e.kind}${e.t > t ? " future" : ""}"><td>${clock(e.t)}</td><td><span class="iedtag">${e.id}</span></td><td>${esc(e.text.replace(e.id + " ", ""))}</td></tr>`).join("")
+    tb.innerHTML = rows.map(e => `<tr class="k-${e.kind}${e.t > t ? " future" : ""}"><td>${clock(e.t)}</td><td><span class="iedtag">${e.id}</span></td><td><span class="evc" title="${EV[kindOf(e, "relay")].label}">${EV[kindOf(e, "relay")].svg}</span>${esc(e.text.replace(e.id + " ", ""))}</td></tr>`).join("")
       || `<tr><td colspan="3" class="empty">No IED records up to t = ${t.toFixed(3)} s</td></tr>`;
   }
 
   renderMarks() {
     const r = this.run, host = $("#pl-marks"); host.innerHTML = "";
-    const seen = new Set();
-    for (const m of this.markers) {
-      const d = document.createElement("div"); d.className = "pl-mark " + m.kind; d.style.left = (m.t / r.T * 100) + "%";
-      const key = m.kind + Math.round(m.t * 50);
-      if ((m.kind === "fault" || m.kind === "trip") && !seen.has(key)) { const l = document.createElement("span"); l.className = "ml"; l.textContent = m.label; d.appendChild(l); seen.add(key); }
-      d.title = `${m.label} at ${m.t.toFixed(3)} s`;
+    const evs = [
+      ...r.events_sim.map(e => ({ t: e.t, k: kindOf(e, "sim"), text: e.text })),
+      ...r.events_relay.map(e => ({ t: e.t, k: kindOf(e, "relay"), text: e.text })),
+    ].sort((a, b) => a.t - b.t);
+    const W = Math.max(host.clientWidth || $("#pl-track").clientWidth || 600, 100), gap = 16;
+    const groups = [];
+    for (const e of evs) {
+      const x = e.t / r.T * W, g = groups[groups.length - 1];
+      if (g && x - g.x0 < gap) g.items.push(e); else groups.push({ x0: x, items: [e] });
+    }
+    for (const g of groups) {
+      const top = g.items.reduce((a, b) => EV[b.k].pri > EV[a.k].pri ? b : a);
+      const d = document.createElement("div");
+      d.className = "pl-ev"; d.style.left = (g.items[0].t / r.T * 100) + "%";
+      d.innerHTML = EV[top.k].svg + (g.items.length > 1 ? `<span class="pl-n">${g.items.length}</span>` : "");
+      d.dataset.tip = g.items.slice(0, 14).map(e => `${e.t.toFixed(3)} s  ${EV[e.k].label}: ${e.text}`).join("\n") + (g.items.length > 14 ? `\n${g.items.length - 14} more` : "");
+      d.onclick = ev => { ev.stopPropagation(); this.pause(); this.seek(g.items[0].t); };
+      d.onmouseenter = () => { const tip = $("#pl-evtip"); tip.textContent = d.dataset.tip; tip.style.display = "block"; tip.style.left = d.style.left; };
+      d.onmouseleave = () => { $("#pl-evtip").style.display = "none"; };
       host.appendChild(d);
     }
   }
@@ -460,6 +469,40 @@ class App {
     drag("#split-v", (dx, dy, s0) => { L.pw = Math.min(Math.max(s0.pw - dx, 300), $("#bottom").clientWidth - 320); });
   }
 
+  // Explanations live behind the round "i" buttons and appear on hover or focus.
+  infoHTML(key) {
+    const sw = c => `<i class="tile-sw ${c}"></i>`;
+    if (key === "alarm") return `<b>SCADA alarm states</b>${ANN_KEY.map(([c, code, t, bl]) => `<div class="ir">${sw(c)}<span><b>${code}</b> ${t}${bl ? ", blinking" : ""}</span></div>`).join("")}<div class="ir">${sw("")}<span>Normal</span></div><p>States follow the RTU scan rate. Click a tile to open its information panel.</p>`;
+    if (key === "soe") return `<b>Sequence of events</b><p>Records downloaded from field IEDs, time-stamped by each IED. The operator receives them only after the event.</p>${["fault", "pickup", "dir", "trip", "cbopen", "cbclose", "dropout", "dertrip", "island", "cleared"].map(k => `<div class="ir">${EV[k].svg}<span>${EV[k].label}</span></div>`).join("")}`;
+    if (key === "phasor") return `<b>Output phasor</b><p>Phasors of the channels shown in the output waveform, at the playback cursor. Angles are referred to ${this.phasor.refText || "phase A of the first channel"}. N is the phasor sum of A, B and C (3I0 or 3V0). Values are fundamental components; Inst is the instantaneous fundamental value.</p>`;
+    if (key === "catalog") return `<b>Stored runs</b><p>Runs are numbered in the order they were produced. Labels and notes are saved on this computer; labels can also be used as a filter.</p>`;
+    if (key === "chart") {
+      const d = this.run && this.run.ied[this.iedIdx[this.relayChart.sel]];
+      const cls = d ? d.cls : "OCR";
+      if (cls === "DIST") return `<b>Mho distance characteristic</b><p>Impedance plane, primary ohms. Z1 solid, Z2 dashed and Z3 dotted circles; the dotted ray is the line angle. Red points are phase-ground loops (with k0 compensation), violet points are phase-phase loops, and the red trace is the closest loop over the last 150 ms. Points outside the plot are load impedances.</p>`;
+      if (cls === "DIFF") return `<b>Line differential characteristic</b><p>Differential current against restraint current per phase. The relay operates above the line (pickup, then 30% slope).</p>`;
+      return `<b>Time-current characteristic</b><p>Log-log plot of operating time against primary current. Solid curve: 51P of the selected relay; dashed curve: 51N; light curves: other relays of the same feeder, for coordination. The vertical marker is the measured current at the cursor and the point is its operating time (violet at pickup, red at trip).</p>`;
+    }
+    return "";
+  }
+  _infoTips(doc) {
+    let tip = null;
+    const show = el => {
+      if (!tip) { tip = doc.createElement("div"); tip.className = "info-tip"; doc.body.appendChild(tip); }
+      tip.innerHTML = this.infoHTML(el.dataset.info);
+      tip.style.display = "block";
+      const r = el.getBoundingClientRect(), vw = doc.defaultView.innerWidth, vh = doc.defaultView.innerHeight;
+      const w = tip.offsetWidth, h = tip.offsetHeight;
+      tip.style.left = Math.max(8, Math.min(r.left - 12, vw - w - 8)) + "px";
+      tip.style.top = (r.bottom + 6 + h > vh ? Math.max(8, r.top - h - 6) : r.bottom + 6) + "px";
+    };
+    const hide = () => { if (tip) tip.style.display = "none"; };
+    doc.addEventListener("mouseover", ev => { const el = ev.target.closest && ev.target.closest(".info"); if (el) show(el); });
+    doc.addEventListener("mouseout", ev => { const el = ev.target.closest && ev.target.closest(".info"); if (el && !el.contains(ev.relatedTarget)) hide(); });
+    doc.addEventListener("focusin", ev => { if (ev.target.classList && ev.target.classList.contains("info")) show(ev.target); });
+    doc.addEventListener("focusout", ev => { if (ev.target.classList && ev.target.classList.contains("info")) hide(); });
+  }
+
   // A panel moves into its own browser window and stays in sync; Attach or closing the window brings it back.
   detach(id) {
     if (this.detached[id]) return this.attach(id);
@@ -480,6 +523,7 @@ class App {
     w.addEventListener("pagehide", () => { if (this.detached[id]) this.attach(id, true); });
     w.addEventListener("resize", () => this.redrawPanels());
     w.addEventListener("keydown", ev => this._onKey(ev));
+    this._infoTips(w.document);
     if (id === "p-wave") this.updateAddBtn();
     setTimeout(() => this.redrawPanels(), 60);
   }
@@ -723,6 +767,7 @@ class App {
     });
     document.querySelectorAll(".det-btn").forEach(b => b.onclick = () => this.detach(b.dataset.panel));
     this._layout();
+    this._infoTips(document);
     window.addEventListener("beforeunload", () => { for (const d of Object.values(this.detached)) d.w.close(); });
     this._popovers();
     $("#scope-win").onchange = e => { this.scope.win = Number(e.target.value); this.scope.drawAll(); };
@@ -740,7 +785,7 @@ class App {
     });
     window.addEventListener("mouseup", () => drag = false);
     window.addEventListener("keydown", ev => this._onKey(ev));
-    window.addEventListener("resize", () => this.redrawPanels());
+    window.addEventListener("resize", () => { this.redrawPanels(); if (this.run) this.renderMarks(); });
   }
   _onKey(ev) {
     {
