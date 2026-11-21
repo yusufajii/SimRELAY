@@ -109,6 +109,18 @@ tetapi dengan penyederhanaan atau nilai parameter yang dipilih sendiri):
 
 Lingkungan yang dipakai: Windows 11, Python 3.11, RAM 7,7 GB, MATLAB R2024b Update 1.
 
+PC kedua (Windows 10, RAM 11,9 GB, 4 thread, MATLAB R2024b Update 10, 21 November 2026): Python
+bawaan 3.14 tidak didukung `matlabengine` 24.2 (hanya 3.9 sampai 3.12). Dipasang Python 3.11.9
+berdampingan, dengan lingkungan proyek `.venv` (numpy, scipy, matplotlib, reportlab,
+`matlabengine==24.2.*`). `Jalankan SimRelay.bat` dan `.claude/launch.json` otomatis memakai
+`.venv\Scripts\python.exe` bila ada. Uji: S0 engine MATLAB 83 s (termasuk build), trip identik
+dengan Python, selisih tegangan maks 0,0017 pu; tombol Simulink membangun dan membuka model komposit.
+
+```bash
+py -3.11 -m venv .venv
+.venv\Scripts\python -m pip install numpy scipy matplotlib reportlab "matlabengine==24.2.*"
+```
+
 ```bash
 pip install numpy scipy matplotlib reportlab
 pip install "matlabengine==24.2.*"      # hanya untuk engine MATLAB

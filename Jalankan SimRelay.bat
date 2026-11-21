@@ -9,10 +9,15 @@ rem ---------------------------------------------------------------
 cd /d "%~dp0"
 set URL=http://127.0.0.1:8034
 
-python -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1',8034))==0 else 1)" >nul 2>&1
+rem Prefer the project environment (.venv, Python 3.11 with matlabengine) when it exists:
+rem the MATLAB R2024b engine supports Python 3.9 to 3.12 only.
+set PY=python
+if exist "%~dp0.venv\Scripts\python.exe" set PY="%~dp0.venv\Scripts\python.exe"
+
+%PY% -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1',8034))==0 else 1)" >nul 2>&1
 if %errorlevel%==0 goto open
 
-where python >nul 2>&1
+%PY% --version >nul 2>&1
 if errorlevel 1 (
   echo Python was not found. Install Python 3.9+ and numpy, then try again.
   pause
@@ -20,12 +25,12 @@ if errorlevel 1 (
 )
 
 echo Starting SimRelay 34 server...
-start "SimRelay 34 Server" /min python server.py --no-browser
+start "SimRelay 34 Server" /min %PY% server.py --no-browser
 
 rem Wait up to 120 s for the server to accept connections.
 set /a tries=0
 :wait
-python -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1',8034))==0 else 1)" >nul 2>&1
+%PY% -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1',8034))==0 else 1)" >nul 2>&1
 if %errorlevel%==0 goto open
 set /a tries+=1
 if %tries% geq 120 (
