@@ -34,8 +34,8 @@ const ALARM = new Set(["trip", "tripped", "uvc", "ovc", "lov"]), WARN = new Set(
 export class AlarmTiles {
   constructor(app) {
     this.app = app; this.sig = null; this.txt = []; this.fkey = null;
-    // every warning tile blinks in phase from one clock, whatever the playback speed
-    setInterval(() => { const a = this.app.q("#ann"); if (a) a.classList.toggle("blk"); }, 320);
+    this.BLINK_MS = 500;      // one full cycle: 250 ms fading down, 250 ms fading up
+    this.HOLD_MS = 500;       // shortest time a tile shows one state during playback
   }
   build(run) {
     const T = run.topology;
@@ -48,12 +48,12 @@ export class AlarmTiles {
       ["Feeder B buses", busB.map(b => [b, "bus", b])],
     ];
     const host = this.app.q("#ann");
-    host.innerHTML = this.groups.map(([g, tiles]) => `<div class="ann-g"><div class="ann-gt">${g}</div><div class="ann-tiles">${tiles.map(([lab, kind, id]) => `<button class="tile" data-kind="${kind}" data-id="${id}"><b>${esc(lab)}</b><span></span></button>`).join("")}</div></div>`).join("");
+    host.innerHTML = this.groups.map(([g, tiles]) => `<div class="ann-g"><div class="ann-gt">${g}</div><div class="ann-tiles">${tiles.map(([lab, kind, id]) => `<button class="tile" data-kind="${kind}" data-id="${id}"><b>${esc(lab)}</b><span></span><i class="veil"></i></button>`).join("")}</div></div>`).join("");
     host.querySelectorAll(".tile").forEach((b, i) => {
       b.onclick = () => { const k = b.dataset.kind; this.app.inspect(k === "sub" ? "cb" : k === "ied" ? "ied" : k, b.dataset.id, null); };
       b.onmouseenter = () => { b.title = `${b.querySelector("b").textContent}: ${this.txt[i] || ""}`; };
     });
-    this.sig = null;
+    this.sig = null; this.shown = null; this.sumHTML = null;
   }
   state(kind, id, run, k, iedState) {
     if (kind === "bus") {
@@ -80,29 +80,51 @@ export class AlarmTiles {
     }
     return run.sub[k] ? ["", "", "Breaker CB-GI closed"] : ["isl", "ISL", "Breaker CB-GI open, network islanded"];
   }
-  update(run, k, iedState) {
+  // Opacity animations run on the compositor, so the rhythm stays exact while playback is busy.
+  // startTime 0 ties every tile to the same document clock, so they all blink in phase.
+  blink(b, on) {
+    if (on && !b._anim) {
+      try {
+        // balanced, sine-like fade: half a cycle dimming, half a cycle brightening
+        b._anim = b.querySelector(".veil").animate([{ opacity: 0 }, { opacity: 0.7 }],
+          { duration: this.BLINK_MS / 2, iterations: Infinity, direction: "alternate", easing: "cubic-bezier(0.37, 0, 0.63, 1)" });
+        b._anim.startTime = 0;
+      } catch (e) { b._anim = null; }
+    } else if (!on && b._anim) { b._anim.cancel(); b._anim = null; }
+  }
+  // During playback each tile keeps the state it shows for at least one blink cycle, like an HMI
+  // refresh, so a burst of changes at fault inception does not look like fast blinking. When the
+  // playback is paused, stepped or sought (hold = false) the true state is shown at once.
+  update(run, k, iedState, hold = false) {
     const host = this.app.q("#ann"); if (!host || !this.groups) return;
-    const fkey = `${run.id}|${k}|${JSON.stringify(iedState)}`;
-    if (fkey === this.fkey) return;           // nothing changed since the last frame
+    const fkey = `${run.id}|${k}|${JSON.stringify(iedState)}|${hold}`;
+    if (fkey === this.fkey && !this.pending) return;
     this.fkey = fkey;
     const out = [];
-    let nA = 0, nW = 0;
-    for (const [, tiles] of this.groups) for (const [, kind, id] of tiles) {
-      const s = this.state(kind, id, run, k, iedState);
-      out.push(s);
-      if (ALARM.has(s[0])) nA++; else if (WARN.has(s[0])) nW++;
-    }
+    for (const [, tiles] of this.groups) for (const [, kind, id] of tiles) out.push(this.state(kind, id, run, k, iedState));
     this.txt = out.map(s => s[2]);
-    const sig = out.map(s => s[0] + s[1]).join("|");
-    if (sig !== this.sig) {
-      this.sig = sig;
-      host.querySelectorAll(".tile").forEach((b, i) => {
-        const [c, code, txt] = out[i];
-        b.className = "tile" + (c ? " " + c : "") + (ANN_KEY.some(x => x[0] === c && x[3]) ? " blink" : "");
-        b.querySelector("span").textContent = code;
-      });
-      this.app.q("#al-sum").innerHTML = (nA ? `<span class="st bad">${nA} alarm${nA > 1 ? "s" : ""}</span>` : "") + (nW ? `<span class="st warn">${nW} warning${nW > 1 ? "s" : ""}</span>` : "") + (!nA && !nW ? `<span class="st ok">No active alarm</span>` : "");
-    }
+    const now = performance.now(), tiles = [...host.querySelectorAll(".tile")];
+    if (!this.shown || this.shown.length !== tiles.length || this.shownRun !== run.id) { this.shown = tiles.map(() => ({ s: null, at: 0 })); this.shownRun = run.id; }
+    let wait = Infinity;
+    tiles.forEach((b, i) => {
+      const [c, code] = out[i], cur = this.shown[i], key = c + "|" + code;
+      if (key === cur.s) return;
+      const left = this.HOLD_MS - (now - cur.at);
+      if (hold && cur.s !== null && left > 0) { wait = Math.min(wait, left); return; }
+      const blink = ANN_KEY.some(x => x[0] === c && x[3]);
+      b.className = "tile" + (c ? " " + c : "") + (blink ? " flash" : "");   // not "blink": that class name has its own fast animation (SLD)
+      this.blink(b, blink);
+      b.querySelector("span").textContent = code;
+      cur.s = key; cur.at = now;
+    });
+    // a held change is shown as soon as its hold time is over, even if the frame does not change
+    clearTimeout(this.timer);
+    this.pending = wait < Infinity;
+    if (this.pending) this.timer = setTimeout(() => this.update(this.app.run, this.app.kOp, this.app.iedStateAt(this.app.run.t[this.app.kOp]), true), wait + 5);
+    let nA = 0, nW = 0;
+    for (const x of this.shown) { const c = (x.s || "").split("|")[0]; if (ALARM.has(c)) nA++; else if (WARN.has(c)) nW++; }
+    const sum = (nA ? `<span class="st bad">${nA} alarm${nA > 1 ? "s" : ""}</span>` : "") + (nW ? `<span class="st warn">${nW} warning${nW > 1 ? "s" : ""}</span>` : "") + (!nA && !nW ? `<span class="st ok">No active alarm</span>` : "");
+    if (sum !== this.sumHTML) { this.sumHTML = sum; this.app.q("#al-sum").innerHTML = sum; }
   }
 }
 

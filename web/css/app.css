@@ -527,7 +527,9 @@ table.soe td .evc { display: inline-block; vertical-align: -3px; margin-right: 6
 .tile.lov { --c: #334155; }     .tile.off { --c: #64748b; }
 .tile:is(.pick, .trip, .tripped, .open, .isl, .uvc, .uvm, .ovc, .ovm, .lov, .off) { background: var(--c); border-color: var(--c); color: #fff; }
 .tile.uvm { color: #1f1300; }
-.ann.blk .tile.blink { background: #fff; color: var(--c); }
+.tile { position: relative; }
+/* blink layer: a real element so the opacity animation runs on the compositor, not the main thread */
+.tile .veil { position: absolute; inset: -1px; background: #fff; opacity: 0; pointer-events: none; will-change: opacity; transform: translateZ(0); }
 .tile-sw { display: inline-block; width: 11px; height: 11px; flex: none; border: 1px solid var(--line-2); background: #fff; }
 .tile-sw.pick { background: #7c3aed; border-color: #7c3aed; } .tile-sw.trip { background: #dc2626; border-color: #dc2626; } .tile-sw.tripped { background: #7f1d1d; border-color: #7f1d1d; }
 .tile-sw.open { background: #15803d; border-color: #15803d; } .tile-sw.isl { background: #0f766e; border-color: #0f766e; } .tile-sw.uvc { background: #ea580c; border-color: #ea580c; }
