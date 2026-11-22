@@ -12,6 +12,11 @@ Jendela evaluasi 'pra-clearing': dari t_on + 1 siklus sampai CB pertama terbuka
 (atau gangguan padam / akhir simulasi).
 """
 from __future__ import annotations
+import copy
+import glob
+import hashlib
+import json
+import os
 import numpy as np
 
 from .network import path_from_source
@@ -19,17 +24,78 @@ from .settings import _zline
 from .relays import t_op, mho_inside
 
 CTI_MIN = 0.20
+BACKFEED_MIN = 0.10        # fault still fed this long after the grid side has opened (s)
+I_LIVE = 1.0               # fault current above this is a live fault (A)
 CODES = {
     "F-1": "Blinding of Protection",
     "F-2": "Sympathetic Tripping",
     "F-3": "Miscoordination / CTI Violation",
     "F-4": "Directional Misidentification",
     "F-5": "Impedance Under-reach",
+    "F-6": "Sustained DER Backfeed",
     "NT":  "Nuisance Trip (No Fault)",
 }
 
+# ------------------------------------------------------------------ baseline (same case without DER)
+# Delayed clearing (F-1) is judged against the same fault without DER. The baseline is simulated
+# once with the Python engine and cached per engine version; the MATLAB and Python engines agree
+# on trip times within one or two steps (pilot of 121 cases), so it serves both engines.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FP = None
 
-def analyze(sim):
+
+def _engine_fp():
+    global _FP
+    if _FP is None:
+        h = hashlib.sha1()
+        for p in sorted(glob.glob(os.path.join(_ROOT, "engine", "*.py"))):
+            with open(p, "rb") as f:
+                h.update(f.read())
+        _FP = h.hexdigest()[:16]
+    return _FP
+
+
+def baseline_trips(sim):
+    """Trip time of every relay, from fault inception, for the same scenario without DER.
+
+    None when the scenario has no DER (it is its own baseline) or is islanded (no source without DER)."""
+    sc = sim.sc
+    if not sc.get("der", {}).get("units") or sc.get("grid", {}).get("mode", "grid") != "grid" or not sc.get("faults"):
+        return None
+    base = copy.deepcopy(sc)
+    base["der"] = {"units": []}
+    base["events"] = [e for e in base.get("events", []) if not str(e.get("id", "")).startswith("DER")]
+    base["faults"] = [{k: v for k, v in f.items() if not k.startswith("_")} for f in base["faults"]]
+    base.setdefault("sim", {})["save"] = False
+    key = hashlib.sha1(json.dumps({"sc": base, "dt": sim.dt}, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    folder = os.path.join(_ROOT, "cache", "baseline", _engine_fp())
+    path = os.path.join(folder, key + ".json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            pass
+    from .sim import Simulator
+    b = Simulator(base, sim.settings).run()
+    t_on = base["faults"][0]["t_on"]
+    out = {d.id: float(d.trip_time) - t_on for d in b.ieds if d.tripped and d.trip_time >= t_on}
+    os.makedirs(folder, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(out, f)
+    os.replace(tmp, path)
+    return out
+
+
+def analyze(sim, baseline="auto"):
+    """baseline: relay trip times without DER ({ied: s from inception}), None to skip the
+    delayed-clearing check, or "auto" to simulate (and cache) it."""
+    if baseline == "auto":
+        try:
+            baseline = baseline_trips(sim)
+        except Exception:
+            baseline = None
     m = sim.model
     net = m.net
     faults = sim.sc.get("faults", [])
@@ -50,6 +116,48 @@ def analyze(sim):
         if not closed.all() and closed[0]:
             k = int(np.argmax(~closed))
             cb_open_times[d.id] = float(sim.t[k])
+
+    # Trips not caused by a fault, in a scenario that has one:
+    #  * the tripping element was already picked up on load current before the first fault, and
+    #    stayed picked up until the trip (typically reverse power flow from a DER above a
+    #    non-directional pickup frozen at the baseline);
+    #  * the trip comes more than 50 ms after every fault has ended (temporary faults).
+    # Such trips are nuisance trips (NT), not sympathetic trips or miscoordination.
+    load_trips = {}
+    if faults:
+        t_first = min(f["t_on"] for f in faults)
+        ends = [f.get("t_off") for f in faults]
+        t_all_off = max(ends) if all(e is not None for e in ends) else None
+        # a relay on the path of a fault is judged against that fault (a late trip there is F-1)
+        on_path = set()
+        for f in faults:
+            if f.get("_node"):
+                on_path |= set(path_from_source(net, f["_node"])[1] or [])
+        for d in sim.ieds:
+            if not d.tripped or d.meta["branch"] in on_path:
+                continue
+            key = str(d.trip_elem or "").split(" ")[0]
+            since = None
+            for e in sorted(d.events, key=lambda x: x["t"]):      # MATLAB replays are not in time order
+                if e["t"] > d.trip_time + 1e-9:
+                    break
+                k2 = e["text"].split(" ")[1] if len(e["text"].split(" ")) > 1 else ""
+                if k2 != key:
+                    continue
+                if e["type"] == "PICKUP":
+                    since = e["t"]
+                elif e["type"] == "DROPOUT":
+                    since = None
+            if since is not None and since < t_first and "(inst)" not in str(d.trip_elem):
+                load_trips[d.id] = f"{key} picked up on load current at t={since:.3f} s, before the fault at t={t_first:.3f} s"
+            elif t_all_off is not None and d.trip_time > t_all_off + 0.05:
+                load_trips[d.id] = f"tripped at t={d.trip_time:.3f} s, after the fault had ended at t={t_all_off:.3f} s"
+        for iid, why in load_trips.items():
+            findings.append({"code": "NT", "ied": iid, "fault": None, "t": trips[iid],
+                             "title": f"{iid} tripped on load current, not on the fault ({trip_elem[iid]})",
+                             "text": f"{iid} {why}. The trip would happen without the fault. Typical cause: reverse power flow "
+                                     "from a DER that exceeds a non-directional pickup frozen at the baseline.",
+                             "evidence": {"t_trip": trips[iid], "elem": trip_elem[iid]}})
 
     if not faults:
         for iid, tt in trips.items():
@@ -80,7 +188,7 @@ def analyze(sim):
         w0 = int(round((t_on + 1.0 / sim.f0 + 2 * dt) / dt))
         w1 = max(int(round(min(t_first_open, t_end) / dt)) - 1, w0 + 1)
         w1 = min(w1, len(sim.t) - 1)
-        win_trips = {i: tt for i, tt in trips.items() if t_on <= tt <= t_end + 0.05}
+        win_trips = {i: tt for i, tt in trips.items() if t_on <= tt <= t_end + 0.05 and i not in load_trips}
         If_peak = float(np.max(np.abs(sim.Ifault[w0:w1 + 1, fi]))) if w1 > w0 else 0.0
         info = {"fault": f"F{fi+1}", "node": node, "type": f["type"], "phases": f.get("phases", ""),
                 "rf": f.get("rf", 0), "t_on": t_on, "feeder": fault_feeder,
@@ -134,6 +242,55 @@ def analyze(sim):
                         "title": f"87L {P.id} did not detect internal fault F{fi+1}",
                         "text": "Differential current remained below the pickup and slope restraint (weak infeed or high Rf).",
                         "evidence": {"pickup_87": s.get("87_pu")}})
+        # ---------------------------------------------- F-1 delayed or missing clearing (any relay class)
+        # Blinding also means a slower trip: infeed between the relay and the fault reduces the current
+        # it sees. Judged against the same fault without DER, so a slow trip that the frozen settings
+        # already give without DER is not attributed to the DER.
+        if P is not None and baseline is not None and not any(
+                x["code"] == "F-1" and x["ied"] == P.id and x["fault"] == f"F{fi+1}" for x in findings):
+            tPn = win_trips.get(P.id)
+            if tPn is not None and P.id in baseline:
+                dB = baseline[P.id]
+                dP = tPn - t_on
+                if dP > max(2 * dB, dB + CTI_MIN):
+                    findings.append({"code": "F-1", "ied": P.id, "fault": f"F{fi+1}", "t": tPn,
+                        "title": f"{P.id} partly blinded: trip delayed to {dP:.3f} s (without DER {dB:.3f} s)",
+                        "text": f"{P.id} cleared the fault at {node} {dP:.3f} s after inception, against {dB:.3f} s for the same "
+                                f"fault without DER. DER infeed between the relay and the fault reduces the current it measures "
+                                f"(or takes it below the instantaneous setting). Operator impact: longer voltage dip and more fault energy.",
+                        "evidence": {"t_trip": dP, "t_baseline": dB, "ratio": dP / dB if dB > 0 else None, "elem": trip_elem.get(P.id)}})
+            elif not win_trips and baseline and f.get("t_off") is None:
+                # nothing trips with DER, while at least one relay clears the same fault without DER
+                first = min(baseline, key=baseline.get)
+                findings.append({"code": "F-1", "ied": P.id, "fault": f"F{fi+1}", "t": t_on,
+                    "title": f"No relay tripped within the run (without DER {first} trips at {baseline[first]:.3f} s)",
+                    "text": f"No relay tripped for the fault at {node} within {T - t_on:.2f} s, while without DER "
+                            + ", ".join(f"{i} trips at {v:.3f} s" for i, v in sorted(baseline.items(), key=lambda x: x[1]))
+                            + " after inception. DER infeed hides the fault from the protection. Operator impact: the fault stays energized.",
+                    "evidence": {"baseline": baseline, "picked": picked_in_window(P)}})
+        # ---------------------------------------------- F-6 sustained DER backfeed
+        # Once a breaker on the fault path has opened, the grid no longer feeds the fault. A fault
+        # current that remains after that comes from a DER in an unintentional island, until the
+        # DER's own undervoltage or anti-islanding protection acts (up to 2 s under IEEE 1547).
+        path_opens = [cb_open_times[d.id] for d in upstream if d.id in cb_open_times and cb_open_times[d.id] > t_on]
+        if path_opens:
+            t_cut = min(path_opens)
+            k0 = int(round((t_cut + BACKFEED_MIN) / dt))
+            k1 = min(int(round(t_end / dt)), len(sim.t) - 1)
+            if k0 <= k1:
+                live = np.max(np.abs(sim.Ifault[k0:k1 + 1, fi]), axis=1) > I_LIVE
+                if live[0]:
+                    stop = np.flatnonzero(~live)
+                    t_last = float(sim.t[k0 + stop[0]]) if stop.size else None
+                    dur = (t_last if t_last is not None else float(sim.t[k1])) - t_cut
+                    Ib = float(np.max(np.abs(sim.Ifault[k0, fi])))
+                    findings.append({"code": "F-6", "ied": None, "fault": f"F{fi+1}", "t": t_cut,
+                        "title": f"Fault F{fi+1} at {node} fed by DER for {dur:.2f} s{'' if t_last is not None else ' or more'} after the grid side opened",
+                        "text": f"The breaker on the fault path opened at t={t_cut:.3f} s, yet the fault kept drawing {Ib:.0f} A from DER "
+                                f"in an unintentional island" + (f" until t={t_last:.3f} s." if t_last is not None else " until the end of the run.")
+                                + " No relay separates the DER from the fault; it stops only when the DER's own protection acts. "
+                                  "Operator impact: the arc persists and a reclose onto the fault fails.",
+                        "evidence": {"t_cut": t_cut, "t_last": t_last, "duration": dur, "I_backfeed": Ib, "until_end": t_last is None}})
         # ---------------------------------------------- F-5 distance
         for d in upstream:
             if d.cls != "DIST":

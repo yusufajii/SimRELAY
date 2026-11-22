@@ -16,7 +16,7 @@ const CLS_SHORT = { OCR: "OCR", DOCR: "67", DIST: "21", DIFF: "87L" };
 const CAT_PAGE = 300;                 // stored runs listed at once (a campaign holds thousands)
 const CAMP_PART = { H1: "penetration and load", H2: "penetration and fault resistance", E: "relay classes", I: "islanded microgrid" };
 const CODE_DESC = {
-  "F-1": "Blinding", "F-2": "Sympathetic trip", "F-3": "Miscoordination (CTI)", "F-4": "Wrong direction", "F-5": "Impedance under-reach", "NT": "Nuisance trip",
+  "F-1": "Blinding", "F-2": "Sympathetic trip", "F-3": "Miscoordination (CTI)", "F-4": "Wrong direction", "F-5": "Impedance under-reach", "F-6": "Sustained DER backfeed", "NT": "Nuisance trip",
 };
 
 class App {
@@ -132,7 +132,7 @@ class App {
       source: [["", "All sources"], ["preset", "Preset"], ["custom", "Custom"], ["simulink", "Simulink Editor"],
                ...uniq(camp.map(m => m.campaign_title)).map(t => ["campaign:" + t, "Campaign: " + t])],
       engine: [["", "All engines"], ["python", "Python"], ["matlab", "MATLAB Simulink"]],
-      outcome: [["", "All outcomes"], ["OK", "Correct operation"], ...["F-1", "F-2", "F-3", "F-4", "F-5", "NT"].map(c => [c, `${c} ${CODE_DESC[c]}`])],
+      outcome: [["", "All outcomes"], ["OK", "Correct operation"], ...["F-1", "F-2", "F-3", "F-4", "F-5", "F-6", "NT"].map(c => [c, `${c} ${CODE_DESC[c]}`])],
       der: [["", "All DER types"], ["none", "No DER"], ...uniq(runs.flatMap(m => m.der.map(d => d.type))).map(t => [t, t])],
       ftype: [["", "All fault types"], ["none", "No fault"], ...uniq(runs.flatMap(m => m.faults.map(f => f.type))).map(t => [t, t])],
       relay: [["", "All relay classes"], ...uniq(runs.map(m => m.relay)).map(c => [c, c])],

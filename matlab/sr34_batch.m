@@ -23,7 +23,11 @@ end
 pool = gcp('nocreate');
 if isempty(pool) || pool.NumWorkers ~= nworkers
     if ~isempty(pool), delete(pool); end
-    pool = parpool('Processes', nworkers, 'IdleTimeout', 120);
+    % The Processes profile allows one worker per physical core by default; raise the limit for
+    % this session only (the saved profile is not changed) when more workers are requested.
+    cl = parcluster('Processes');
+    if cl.NumWorkers < nworkers, cl.NumWorkers = nworkers; end
+    pool = parpool(cl, nworkers, 'IdleTimeout', 120);
     wait(parfevalOnAll(pool, @sr34_worker_init, 0, here));
 end
 parfor i = 1:numel(cfgs)
