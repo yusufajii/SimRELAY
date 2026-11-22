@@ -23,7 +23,7 @@ Design
   candidate buses (806, 828, 840, 848 on Feeder A, B03 on Feeder B) with one technology
   (synchronous generator with a Yg-Delta transformer, or grid-following inverter), and
   applies one of 11 fault cases. A cell's failure rate is the share of
-  (placement, fault) cases with at least one misoperation (F-1 to F-5).
+  (placement, fault) cases with at least one misoperation (F-1 to F-6).
 
 Campaign
   H1  Penetration x load level     OCR, Rf = 0
@@ -156,10 +156,12 @@ def run_case(p):
     return record(p, sc, sim, analyze(sim), t0)
 
 
-def post_matlab_case(p, cfgfile, matfile, run_dir=None, slx=None):
+def post_matlab_case(p, cfgfile, matfile, run_dir=None, slx=None, anchor="auto"):
     """Turn one MATLAB result file into a case record (runs in a Python worker process).
 
-    Campaign runs (RUN_DIR given) are also stored in full in RUN_DIR (see campaign.save_run)."""
+    Campaign runs (RUN_DIR given) are also stored in full in RUN_DIR (see campaign.save_run).
+    ANCHOR: relay trip times of the same case without DER from the MATLAB campaign (the reference
+    for delayed clearing, F-1), None for no reference, or "auto" for a Python-engine reference."""
     import scipy.io
     from engine.sim import Simulator
     from engine.hunter import analyze
@@ -170,9 +172,10 @@ def post_matlab_case(p, cfgfile, matfile, run_dir=None, slx=None):
         cfg = json.load(f)
     mat = scipy.io.loadmat(matfile, squeeze_me=True, struct_as_record=False)
     sim = load_matlab(Simulator, sc, _S, cfg, mat)
-    hunt = analyze(sim)
+    hunt = analyze(sim, baseline=anchor)
     r = record(p, sc, sim, hunt, t0)
     r["engine"] = "matlab"
+    r["anchor"] = "matlab" if isinstance(anchor, dict) else ("python" if anchor == "auto" else None)
     r["replay_mismatch"] = int(sim.replay_mismatch)
     r["matlab_wall"] = round(float(np.asarray(mat.get("wall", 0.0))), 2)
     r["matlab_build"] = round(float(np.asarray(mat.get("tb", 0.0))), 2)
@@ -301,7 +304,7 @@ def export(results):
                    "peak_load_kw": PEAK_LOAD_KW, "placements": PLACEMENTS, "isl_sites": ISL_SITES, "runs": rows}, f)
     try:
         import scipy.io
-        codes = ["F-1", "F-2", "F-3", "F-4", "F-5", "NT"]
+        codes = ["F-1", "F-2", "F-3", "F-4", "F-5", "F-6", "NT"]
         tab = {
             "campaign": np.array([r["campaign"] for r in rows], dtype=object),
             "der_placement": np.array([r["fleet"] for r in rows], dtype=object),
@@ -332,7 +335,89 @@ def structure_of(c):
     return (c["fleet"], c["bus"], c["ftype"])
 
 
-def run_matlab(todo, done, workers, f, t0, topo=None):
+def split_parts(cases, parts):
+    """Split the DER cases into PARTS sub-batches of about equal size, never splitting a topology
+    (fleet, bus, fault type), so each stored Simulink model is built in one part only. The split
+    depends only on the case list, so a part always holds the same cases."""
+    groups = {}
+    for c in sorted((c for c in cases if c["fleet"] != "none"), key=structure_of):
+        groups.setdefault(structure_of(c), []).append(c)
+    total = sum(len(g) for g in groups.values())
+    out, cur, filled = [[] for _ in range(parts)], 0, 0
+    for g in groups.values():
+        if cur < parts - 1 and filled >= total * (cur + 1) / parts:
+            cur += 1
+        out[cur].extend(g)
+        filled += len(g)
+    return out
+
+
+class RunLock:
+    """One campaign sweep at a time per folder (two would exhaust the RAM)."""
+
+    def __init__(self, folder):
+        self.p = os.path.join(folder, "sweep.lock")
+
+    def __enter__(self):
+        if os.path.exists(self.p):
+            try:
+                pid = int(open(self.p).read().split()[0])
+                import subprocess
+                alive = str(pid) in subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True,
+                                                   text=True).stdout if os.name == "nt" else os.path.exists(f"/proc/{pid}")
+            except (OSError, ValueError, IndexError):
+                alive = False
+            if alive:
+                sys.exit(f"[batch] another sweep is running in this campaign (process {pid}); stop it first.")
+        with open(self.p, "w") as g:
+            g.write(f"{os.getpid()} {time.strftime('%Y-%m-%d %H:%M:%S')}" + "\n")
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            os.remove(self.p)
+        except OSError:
+            pass
+
+
+def no_quickedit():
+    """Turn off QuickEdit in this console window. With QuickEdit on, a click in the window starts a
+    text selection ("Select" in the title) and every print blocks until Esc is pressed, which stops
+    the whole sweep."""
+    if os.name != "nt":
+        return
+    import ctypes
+    k = ctypes.windll.kernel32
+    h = k.GetStdHandle(-10)                             # STD_INPUT_HANDLE
+    mode = ctypes.c_uint32()
+    if k.GetConsoleMode(h, ctypes.byref(mode)):
+        k.SetConsoleMode(h, (mode.value & ~0x0040) | 0x0080)   # clear ENABLE_QUICK_EDIT_MODE, set EXTENDED_FLAGS
+
+
+def keep_awake(on=True):
+    """Keep Windows from sleeping while the sweep runs (the display may still turn off)."""
+    if os.name != "nt":
+        return
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+
+
+def anchor_key(c):
+    """The 0% DER case that anchors a grid-connected case (same fault, load, Rf and relay class).
+
+    Islanded cases have no anchor: without DER the island has no source."""
+    if c["fleet"].startswith("ISL"):
+        return None
+    return (c["load"], c["rf"], c["bus"], c["ftype"], c["cls"])
+
+
+def anchor_trips(r):
+    """Relay trip times from fault inception in a 0% DER record (the F-1 delayed-clearing anchor)."""
+    return {i: v["t_trip"] for i, v in r["ieds"].items() if v.get("tripped") and v.get("t_trip") is not None and v["t_trip"] >= 0}
+
+
+def run_matlab(todo, done, workers, f, t0, topo=None, anchors=None):
     """Simulate with the MATLAB Simulink engine (parfor), post-process in Python worker processes.
 
     TOPO (campaign.Topologies) turns on campaign storage: each new topology is saved once as
@@ -391,8 +476,10 @@ def run_matlab(todo, done, workers, f, t0, topo=None):
         pending = {}
         for c, it in zip(part, items):
             if os.path.exists(it["out"]):
-                extra = () if topo is None else (os.path.join(OUT, "runs", c["run_id"]), topo.slx(c["topology"]))
-                pending[post.submit(post_matlab_case, c, it["cfg"], it["out"], *extra)] = c
+                rd, slx = (None, None) if topo is None else (os.path.join(OUT, "runs", c["run_id"]), topo.slx(c["topology"]))
+                anc = "auto" if anchors is None else (None if c["fleet"] == "none" or anchor_key(c) is None
+                                                       else anchors.get(anchor_key(c)))
+                pending[post.submit(post_matlab_case, c, it["cfg"], it["out"], rd, slx, anc)] = c
             else:
                 err = it["out"] + ".err"
                 why = open(err).read()[:300] if os.path.exists(err) else "no output"
@@ -458,7 +545,28 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="run at most this many of the remaining cases (test runs)")
     ap.add_argument("--campaign", action="store_true",
                     help="Proof of Urgencies campaign: MATLAB engine, every case stored in full (see campaign.py)")
+    ap.add_argument("--part", type=int, default=0,
+                    help="campaign sub-batch 1 to --parts (0: all). The anchors without DER always run first if missing.")
+    ap.add_argument("--parts", type=int, default=5)
+    ap.add_argument("--list-parts", action="store_true", help="print the sub-batches and their progress, then exit")
+    ap.add_argument("--log", default=None, help="also append everything printed to this file")
     a = ap.parse_args()
+    if a.log:
+        os.makedirs(os.path.dirname(os.path.abspath(a.log)), exist_ok=True)
+        logf = open(a.log, "a", encoding="utf-8", buffering=1)
+
+        class _Tee:
+            def __init__(self, s):
+                self.s = s
+
+            def write(self, x):
+                logf.write(x)                   # the file first: a frozen console must not hold up the log
+                self.s.write(x)
+
+            def flush(self):
+                self.s.flush()
+                logf.flush()
+        sys.stdout, sys.stderr = _Tee(sys.stdout), _Tee(sys.stderr)
     if a.campaign:
         import campaign
         a.engine = "matlab"
@@ -476,6 +584,20 @@ def main():
         for c in cases:
             c["run_id"] = ids[c["key"]]
     done = load_results()
+    if a.campaign and not a.pilot and (a.part or a.list_parts):
+        anchors_all = [c for c in cases if c["fleet"] == "none"]
+        parts = split_parts(cases, a.parts)
+        if a.list_parts:
+            print(f"anchors (no DER): {sum(c['key'] in done for c in anchors_all)}/{len(anchors_all)} done")
+            for i, pc in enumerate(parts, 1):
+                ids = [c["run_id"] for c in pc]
+                print(f"part {i}: {sum(c['key'] in done for c in pc)}/{len(pc)} done, {len({structure_of(c) for c in pc})} topologies, "
+                      f"{min(ids)} ... {max(ids)}")
+            return
+        if not 1 <= a.part <= a.parts:
+            sys.exit(f"--part must be 1 to {a.parts}")
+        cases = anchors_all + parts[a.part - 1]
+        print(f"[batch] part {a.part} of {a.parts}: {len(parts[a.part - 1])} cases with DER, plus the anchors still missing", flush=True)
     todo = [c for c in cases if c["key"] not in done]
     n_left = len(todo)
     if a.limit > 0:
@@ -491,15 +613,42 @@ def main():
     if a.engine == "matlab":
         _init()
         topo = None
+        lock = RunLock(OUT) if a.campaign else None
+        if lock:
+            lock.__enter__()
+            keep_awake(True)
+            no_quickedit()
         if a.campaign:
             topo = campaign.Topologies(OUT)
-            write_campaign_json(a, cases, done, started=time.strftime("%Y-%m-%d %H:%M:%S"))
+            write_campaign_json(a, cases, done, started=time.strftime("%Y-%m-%d %H:%M:%S")
+                                + (f" (part {a.part})" if a.part else ""))
         with open(JSONL, "a") as f:
-            run_matlab(todo, done, a.workers, f, t0, topo)
+            if a.campaign:
+                # Phase 1: the 0% DER cases, which anchor delayed clearing (F-1) for every other case.
+                # Phase 2: the DER cases, labelled against the MATLAB anchors of phase 1.
+                first = [c for c in todo if c["fleet"] == "none"]
+                rest = [c for c in todo if c["fleet"] != "none"]
+                if first:
+                    print(f"[batch] phase 1: {len(first)} anchor cases without DER", flush=True)
+                    run_matlab(first, done, a.workers, f, t0, topo, anchors={})
+                anchors = {anchor_key(r): anchor_trips(r) for r in done.values() if r.get("fleet") == "none"}
+                need = {anchor_key(c) for c in rest} - {None}
+                miss = need - set(anchors)
+                if miss:
+                    print(f"[batch] WARNING: {len(miss)} anchors missing, delayed clearing is not judged for those cases", flush=True)
+                if rest:
+                    print(f"[batch] phase 2: {len(rest)} cases with DER, {len(anchors)} MATLAB anchors", flush=True)
+                    run_matlab(rest, done, a.workers, f, t0, topo, anchors=anchors)
+            else:
+                run_matlab(todo, done, a.workers, f, t0, topo)
         export({k: v for k, v in done.items() if k in {c['key'] for c in cases} or not a.pilot})
         if a.campaign:
-            write_campaign_json(a, cases, done, finished=time.strftime("%Y-%m-%d %H:%M:%S"),
-                                minutes=round((time.time() - t0) / 60, 1))
+            key = f"part{a.part}" if a.part else "all"
+            write_campaign_json(a, cases, done, **{f"finished_{key}": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                                   f"minutes_{key}": round((time.time() - t0) / 60, 1)})
+        if lock:
+            keep_awake(False)
+            lock.__exit__()
         print(f"[batch] finished in {(time.time()-t0)/60:.1f} min. Results in {OUT}", flush=True)
         return
     with ProcessPoolExecutor(max_workers=a.workers, initializer=_init) as ex, open(JSONL, "a") as f:
