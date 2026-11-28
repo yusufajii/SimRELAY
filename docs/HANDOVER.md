@@ -264,6 +264,12 @@ dengan ukuran 0-120% beban puncak Penyulang A (1.769 kW), x 11 kasus gangguan
 
 ## 6. Status dan langkah berikutnya
 
+> **Pembaruan 28 November 2026.** Campaign PoU sudah selesai dan paper IEEE sudah jadi. Posisi
+> terbaru ada di `docs/handover/README.md`; paper di `docs/handover/PAPER_IEEE.md`; rencana
+> SimRELAY 2 (EMT, blok relai programmable dengan SV dan GOOSE, algoritma adaptif DP-2) di
+> `docs/handover/NEXT_SimRELAY2.md`, **masih tahap diskusi dan belum boleh dikerjakan**.
+> Isi bagian ini di bawah adalah catatan lama (sebelum sweep).
+
 **Pekerjaan berikutnya: campaign "Proof of Urgencies TA Proteksi Adaptif" (PoU).** Rencana lengkap,
 kondisi kode, dan pertanyaan yang menunggu jawaban ada di `docs/CAMPAIGN_PoU.md` (21 November 2026).
 Campaign ini menggantikan butir 2 di bawah: sweep 5.247 kasus dijalankan dengan engine MATLAB,
