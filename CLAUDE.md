@@ -7,7 +7,8 @@ sebagai dasar urgensi relai adaptif.
 **Baca `docs/HANDOVER.md` lebih dulu.** Isinya: status pekerjaan, arsitektur, cara build dan
 menjalankan, hasil validasi, keputusan yang masih menunggu pengguna, dan jebakan teknis yang
 sudah ditemukan. Kalau pengguna berkata "migrasi kesini" atau "lanjutkan", mulai dari bagian
-"Status dan langkah berikutnya" di dokumen itu. Pekerjaan campaign "Proof of Urgencies TA Proteksi
+"Status dan langkah berikutnya" di dokumen itu. Posisi terbaru (paper selesai, rencana SimRELAY 2)
+ada di `docs/handover/README.md`. Pekerjaan campaign "Proof of Urgencies TA Proteksi
 Adaptif" (PoU) direncanakan di `docs/CAMPAIGN_PoU.md`.
 
 ## Ringkas
